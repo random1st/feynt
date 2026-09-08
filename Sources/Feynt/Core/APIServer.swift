@@ -136,7 +136,7 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
     private func healthPayload() -> [String: Any] {
         var payload: [String: Any] = [
             "model": settings.selectedModel.repo,
-            "mode": engine.stats.speculative ? "dflash" : "plain",
+            "mode": engine.stats.speculative ? "speculative" : "plain",
         ]
         switch engine.state {
         case .ready, .generating: payload["status"] = "ok"
@@ -152,7 +152,7 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
     private func metricsPayload() -> [String: Any] {
         [
             "model": settings.selectedModel.repo,
-            "mode": engine.stats.speculative ? "dflash" : "plain",
+            "mode": engine.stats.speculative ? "speculative" : "plain",
             "requests": metrics.requests,
             "prompt_tokens": metrics.promptTokens,
             "completion_tokens": metrics.completionTokens,

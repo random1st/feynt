@@ -19,7 +19,7 @@ struct MenuBarContent: View {
     var body: some View {
         Text("\(settings.selectedModel.title) — \(engine.statusText)")
 
-        Text(engine.speculative ? "Mode: DFlash speculation" : "Mode: plain decoding")
+        Text(engine.speculative ? "Mode: speculative decoding" : "Mode: plain decoding")
 
         if engine.stats.tokensPerSecond > 0 {
             Text(String(format: "Speed: %.1f tok/s", engine.stats.tokensPerSecond))

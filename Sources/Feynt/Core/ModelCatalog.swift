@@ -25,7 +25,7 @@ struct ModelSpec: Identifiable, Hashable {
         ModelSpec(
             id: "\(id).drafter",
             title: "Drafter for \(title)",
-            subtitle: "DFlash",
+            subtitle: "speculative drafter",
             repo: drafterRepo,
             approximateBytes: drafterApproximateBytes,
             drafterRepo: drafterRepo,

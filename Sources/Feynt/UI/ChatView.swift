@@ -100,7 +100,7 @@ private struct SpeedReadout: View {
                     systemImage: "bolt.horizontal.circle")
             }
             if engine.state != .unloaded {
-                Text(engine.speculative ? "DFlash" : "plain")
+                Text(engine.speculative ? "speculative" : "plain")
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(
