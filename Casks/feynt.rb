@@ -1,6 +1,6 @@
 cask "feynt" do
-  version "0.2.4"
-  sha256 "4148654e07eecef5d33be54fdddd8bae4772e974094163cb42e6fa1029b8c4be"
+  version "0.2.5"
+  sha256 "ea76eee9e108056f94984d20be3f3f6dc77412ecf432830cbcd274d5289e60e5"
 
   url "https://github.com/random1st/feynt/releases/download/v#{version}/Feynt-#{version}.dmg"
   name "Feynt"
@@ -20,6 +20,6 @@ cask "feynt" do
     "~/Library/Preferences/com.random1st.feynt.plist",
   ]
 
-  # Signed with a Developer ID and notarised by Apple; the ticket is attached to
-  # the DMG, so Gatekeeper accepts the app without a manual quarantine dance.
+  # Signed with a Developer ID and notarised by Apple. Both the app and the DMG
+  # carry their own ticket, so the first launch needs no network round trip.
 end
