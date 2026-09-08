@@ -59,15 +59,18 @@ struct ModelView: View {
         .background(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.25)))
     }
 
+    /// The drafter belongs to whichever model is selected, so this row follows the
+    /// selection rather than naming a single shared accelerator.
     private var drafterRow: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let spec = ModelCatalog.model(id: settings.selectedModelID) ?? ModelCatalog.uncensored
+        return VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(ModelCatalog.drafter.title)
+                Text(spec.drafter.title)
                 Spacer()
                 Text(engine.speculative ? "используется" : "не активен")
                     .foregroundStyle(engine.speculative ? .green : .secondary)
             }
-            Text(ModelResolver.installedLocation(for: ModelCatalog.drafter)?.path ?? "не скачан")
+            Text(ModelResolver.installedLocation(for: spec.drafter)?.path ?? "не скачан")
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)

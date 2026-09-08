@@ -27,7 +27,7 @@ final class AppState: ObservableObject {
 
     /// The two catalog models plus the shared drafter, in the order the wizard downloads them.
     func missingArtifacts(for spec: ModelSpec) -> [ModelSpec] {
-        [spec, ModelCatalog.drafter].filter { !ModelResolver.isPresent($0) }
+        [spec, spec.drafter].filter { !ModelResolver.isPresent($0) }
     }
 
     func finishWizard(with spec: ModelSpec) {

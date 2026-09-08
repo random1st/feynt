@@ -1,44 +1,88 @@
 import Foundation
 
-/// One of the two models the app offers. Deliberately a closed set: this is a launcher for
-/// one local LLM, not a model manager, so there is no discovery and no free-form repo entry.
+/// A model the app offers, together with the drafter that makes it fast.
+///
+/// The catalog is closed on purpose, but the rule is not "few models" - it is that every
+/// entry has a matching DFlash drafter. A target without one runs at plain decode speed,
+/// which is the one thing this app exists to avoid, so listing it would sell a promise the
+/// app cannot keep for that row.
 struct ModelSpec: Identifiable, Hashable {
     let id: String
     let title: String
     let subtitle: String
     let repo: String
     let approximateBytes: Int64
+    /// Repo of the DFlash drafter trained against this target.
+    let drafterRepo: String
+    let drafterApproximateBytes: Int64
 
     var directoryName: String {
         repo.split(separator: "/").last.map(String.init) ?? repo
     }
+
+    /// The drafter as its own downloadable spec.
+    var drafter: ModelSpec {
+        ModelSpec(
+            id: "\(id).drafter",
+            title: "Ускоритель для \(title)",
+            subtitle: "DFlash",
+            repo: drafterRepo,
+            approximateBytes: drafterApproximateBytes,
+            drafterRepo: drafterRepo,
+            drafterApproximateBytes: drafterApproximateBytes)
+    }
 }
 
 enum ModelCatalog {
-    static let stock = ModelSpec(
-        id: "stock",
-        title: "Qwen3.8-27B",
-        subtitle: "стоковая",
-        repo: "mlx-community/Qwen3.8-27B-4bit",
-        approximateBytes: 16 * 1_000_000_000)
+    private static let dflash2_27B = "incoai/Qwen3.8-27B-DFlash2"
 
     static let uncensored = ModelSpec(
         id: "uncensored",
         title: "Qwen3.8-27B Uncensored",
         subtitle: "без цензуры",
         repo: "orcarouter/Qwen3.8-27B-Uncensored-MLX",
-        approximateBytes: 16 * 1_000_000_000)
+        approximateBytes: 16_000_000_000,
+        drafterRepo: dflash2_27B,
+        drafterApproximateBytes: 3_700_000_000)
 
-    /// Both targets share one drafter; without it generation still works, just without
-    /// speculative decoding.
-    static let drafter = ModelSpec(
-        id: "drafter",
-        title: "DFlash2 drafter",
-        subtitle: "ускоритель",
-        repo: "incoai/Qwen3.8-27B-DFlash2",
-        approximateBytes: 3_700_000_000)
+    static let stock = ModelSpec(
+        id: "stock",
+        title: "Qwen3.8-27B",
+        subtitle: "стоковая",
+        repo: "mlx-community/Qwen3.8-27B-4bit",
+        approximateBytes: 16_000_000_000,
+        drafterRepo: dflash2_27B,
+        drafterApproximateBytes: 3_700_000_000)
 
-    static let all: [ModelSpec] = [stock, uncensored]
+    static let qwen36 = ModelSpec(
+        id: "qwen36-27b",
+        title: "Qwen3.6-27B",
+        subtitle: "предыдущее поколение",
+        repo: "mlx-community/Qwen3.6-27B-4bit",
+        approximateBytes: 16_000_000_000,
+        drafterRepo: "z-lab/Qwen3.6-27B-DFlash",
+        drafterApproximateBytes: 3_700_000_000)
+
+    static let qwen35 = ModelSpec(
+        id: "qwen35-27b",
+        title: "Qwen3.5-27B",
+        subtitle: "предыдущее поколение",
+        repo: "mlx-community/Qwen3.5-27B-4bit",
+        approximateBytes: 16_000_000_000,
+        drafterRepo: "z-lab/Qwen3.5-27B-DFlash",
+        drafterApproximateBytes: 3_700_000_000)
+
+    /// The small one: fits comfortably where a 27B does not, and answers sooner.
+    static let qwen35small = ModelSpec(
+        id: "qwen35-9b",
+        title: "Qwen3.5-9B",
+        subtitle: "лёгкая",
+        repo: "mlx-community/Qwen3.5-9B-4bit",
+        approximateBytes: 5_500_000_000,
+        drafterRepo: "z-lab/Qwen3.5-9B-DFlash",
+        drafterApproximateBytes: 1_600_000_000)
+
+    static let all: [ModelSpec] = [uncensored, stock, qwen36, qwen35, qwen35small]
 
     static func model(id: String) -> ModelSpec? {
         all.first { $0.id == id }

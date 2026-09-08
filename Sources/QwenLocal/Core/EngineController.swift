@@ -53,7 +53,7 @@ final class EngineController: ObservableObject {
         }
         state = .loading
         activeModel = spec
-        let drafterDirectory = ModelResolver.installedLocation(for: ModelCatalog.drafter)
+        let drafterDirectory = ModelResolver.installedLocation(for: spec.drafter)
         do {
             try await engine.load(modelDirectory: modelDirectory, drafterDirectory: drafterDirectory)
             speculative = await engine.isSpeculative
