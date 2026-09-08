@@ -23,6 +23,7 @@ actor DFlashEngine: InferenceEngine {
     /// EOS ids for the loaded target, resolved once at load time.
     private var stopTokens: Set<Int> = []
 
+
     init(fallback: MLXEngine = MLXEngine()) {
         self.fallback = fallback
     }
@@ -165,7 +166,7 @@ actor DFlashEngine: InferenceEngine {
                     case .failed(let reason):
                         AppLog.write("dflash generation failed: \(reason)")
                         for item in splitter.finish() { continuation.yield(item) }
-                        continuation.yield(.text("\n[сбой генерации: \(reason)]"))
+                        continuation.yield(.text("\n[generation failed: \(reason)]"))
                         continuation.yield(.finished(GenerationStats()))
                     }
                 }

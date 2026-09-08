@@ -131,7 +131,7 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
     private func healthPayload() -> [String: Any] {
         var payload: [String: Any] = [
             "model": settings.selectedModel.repo,
-            "mode": engine.speculative ? "mtp" : "plain",
+            "mode": engine.stats.speculative ? "dflash" : "plain",
         ]
         switch engine.state {
         case .ready, .generating: payload["status"] = "ok"
@@ -147,7 +147,7 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
     private func metricsPayload() -> [String: Any] {
         [
             "model": settings.selectedModel.repo,
-            "mode": engine.speculative ? "mtp" : "plain",
+            "mode": engine.stats.speculative ? "dflash" : "plain",
             "requests": metrics.requests,
             "prompt_tokens": metrics.promptTokens,
             "completion_tokens": metrics.completionTokens,
@@ -189,7 +189,7 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
     private func run(_ request: ChatRequest, responder: HTTPResponder) async {
         guard await engine.ensureLoaded() else {
             responder.sendJSON(
-                status: 503, object: ["error": ["message": "модель не загружена"]])
+                status: 503, object: ["error": ["message": "no model loaded"]])
             return
         }
 
@@ -303,8 +303,11 @@ private struct ChatRequest {
         }
         guard !turns.isEmpty else { return nil }
 
-        maxTokens = (root["max_tokens"] as? Int) ?? (root["max_completion_tokens"] as? Int) ?? 2048
-        temperature = (root["temperature"] as? NSNumber).map { $0.floatValue } ?? 0.7
+        maxTokens = (root["max_tokens"] as? Int) ?? (root["max_completion_tokens"] as? Int) ?? 4096
+        // Greedy unless the client asks otherwise. The speculative loop verifies greedily,
+        // so a sampling default sent every unqualified request down the slow path while the
+        // server still reported that speculation was on.
+        temperature = (root["temperature"] as? NSNumber).map { $0.floatValue } ?? 0
         stream = (root["stream"] as? Bool) ?? false
         let kwargs = root["chat_template_kwargs"] as? [String: Any]
         thinking = kwargs?["enable_thinking"] as? Bool

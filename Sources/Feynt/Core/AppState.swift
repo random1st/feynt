@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 
@@ -36,5 +37,8 @@ final class AppState: ObservableObject {
     func finishWizard(with spec: ModelSpec) {
         settings.selectedModelID = spec.id
         settings.wizardCompleted = true
+        // Launch raised the app to a regular one so the wizard could take focus; drop back
+        // so the Dock icon does not outlive the setup it existed for.
+        NSApp.setActivationPolicy(.accessory)
     }
 }

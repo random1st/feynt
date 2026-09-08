@@ -49,7 +49,7 @@ final class ChatStore: ObservableObject {
         streamTask = Task { [weak self] in
             guard let self else { return }
             guard await self.engine.ensureLoaded() else {
-                self.finishStream(error: "Модель не загружена")
+                self.finishStream(error: "No model loaded")
                 return
             }
             do {
@@ -114,7 +114,7 @@ final class ChatStore: ObservableObject {
             if messages[index].role == .assistant, messages[index].text.isEmpty,
                !messages[index].reasoning.isEmpty
             {
-                messages[index].text = "(модель израсходовала бюджет токенов на размышления)"
+                messages[index].text = "(the model spent its token budget reasoning)"
             }
         }
         errorMessage = error

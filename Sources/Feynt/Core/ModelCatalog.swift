@@ -24,7 +24,7 @@ struct ModelSpec: Identifiable, Hashable {
     var drafter: ModelSpec {
         ModelSpec(
             id: "\(id).drafter",
-            title: "Ускоритель для \(title)",
+            title: "Drafter for \(title)",
             subtitle: "DFlash",
             repo: drafterRepo,
             approximateBytes: drafterApproximateBytes,
@@ -39,7 +39,7 @@ enum ModelCatalog {
     static let uncensored = ModelSpec(
         id: "uncensored",
         title: "Qwen3.8-27B Uncensored",
-        subtitle: "без цензуры",
+        subtitle: "uncensored",
         repo: "orcarouter/Qwen3.8-27B-Uncensored-MLX",
         approximateBytes: 16_000_000_000,
         drafterRepo: dflash2_27B,
@@ -48,7 +48,7 @@ enum ModelCatalog {
     static let stock = ModelSpec(
         id: "stock",
         title: "Qwen3.8-27B",
-        subtitle: "стоковая",
+        subtitle: "stock",
         repo: "mlx-community/Qwen3.8-27B-4bit",
         approximateBytes: 16_000_000_000,
         drafterRepo: dflash2_27B,
@@ -57,7 +57,7 @@ enum ModelCatalog {
     static let qwen36 = ModelSpec(
         id: "qwen36-27b",
         title: "Qwen3.6-27B",
-        subtitle: "предыдущее поколение",
+        subtitle: "previous generation",
         repo: "mlx-community/Qwen3.6-27B-4bit",
         approximateBytes: 16_000_000_000,
         drafterRepo: "z-lab/Qwen3.6-27B-DFlash",
@@ -66,7 +66,7 @@ enum ModelCatalog {
     static let qwen35 = ModelSpec(
         id: "qwen35-27b",
         title: "Qwen3.5-27B",
-        subtitle: "предыдущее поколение",
+        subtitle: "previous generation",
         repo: "mlx-community/Qwen3.5-27B-4bit",
         approximateBytes: 16_000_000_000,
         drafterRepo: "z-lab/Qwen3.5-27B-DFlash",
@@ -76,7 +76,7 @@ enum ModelCatalog {
     static let qwen35small = ModelSpec(
         id: "qwen35-9b",
         title: "Qwen3.5-9B",
-        subtitle: "лёгкая",
+        subtitle: "light",
         repo: "mlx-community/Qwen3.5-9B-4bit",
         approximateBytes: 5_500_000_000,
         drafterRepo: "z-lab/Qwen3.5-9B-DFlash",
@@ -88,7 +88,7 @@ enum ModelCatalog {
     static let qwen36moe = ModelSpec(
         id: "qwen36-35b-a3b",
         title: "Qwen3.6-35B-A3B",
-        subtitle: "MoE, самая быстрая",
+        subtitle: "MoE, the fastest",
         repo: "mlx-community/Qwen3.6-35B-A3B-4bit",
         approximateBytes: 20_000_000_000,
         drafterRepo: "z-lab/Qwen3.6-35B-A3B-DFlash",

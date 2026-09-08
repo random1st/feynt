@@ -29,8 +29,11 @@ struct GenerationStats: Sendable, Equatable {
 /// Per-request knobs. A struct rather than loose parameters so the API server can honour
 /// OpenAI fields without widening the protocol every time a client sends a new one.
 struct GenerationOptions: Sendable {
-    var maxTokens: Int = 2048
-    var temperature: Float = 0.7
+    var maxTokens: Int = 4096
+    /// Greedy by default. The DFlash loop only verifies greedily, so any other default
+    /// silently routed every request that did not name a temperature onto the slow path —
+    /// speculation was never engaged and the menu bar still claimed it was.
+    var temperature: Float = 0
     var thinking: Bool = false
 }
 
@@ -42,11 +45,11 @@ enum EngineError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notLoaded:
-            return "Модель не загружена."
+            return "No model is loaded."
         case .modelMissing(let path):
-            return "Каталог модели не найден: \(path)"
+            return "Model directory not found: \(path)"
         case .loadFailed(let reason):
-            return "Не удалось загрузить модель: \(reason)"
+            return "Could not load the model: \(reason)"
         }
     }
 }

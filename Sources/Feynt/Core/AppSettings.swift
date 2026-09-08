@@ -4,7 +4,7 @@ import SwiftUI
 /// User-visible preferences, persisted in `UserDefaults`.
 @MainActor
 final class AppSettings: ObservableObject {
-    /// Sentinel for "никогда" — the idle timer is disabled.
+    /// Sentinel for "never" — the idle timer is disabled.
     static let idleNever = 0
     static let idleChoices = [60, 300, 900, 1800, 3600, idleNever]
 
@@ -27,7 +27,7 @@ final class AppSettings: ObservableObject {
         port = (defaults.object(forKey: "port") as? Int) ?? 19234
         idleTimeout = (defaults.object(forKey: "idleTimeout") as? Int) ?? 300
         thinkingByDefault = defaults.bool(forKey: "thinkingByDefault")
-        maxTokens = (defaults.object(forKey: "maxTokens") as? Int) ?? 2048
+        maxTokens = (defaults.object(forKey: "maxTokens") as? Int) ?? 4096
         selectedModelID = defaults.string(forKey: "selectedModelID") ?? ModelCatalog.uncensored.id
         wizardCompleted = defaults.bool(forKey: "wizardCompleted")
     }
@@ -38,9 +38,9 @@ final class AppSettings: ObservableObject {
 
     static func idleLabel(_ seconds: Int) -> String {
         switch seconds {
-        case idleNever: return "никогда"
-        case ..<3600: return "\(seconds / 60) мин"
-        default: return "\(seconds / 3600) ч"
+        case idleNever: return "never"
+        case ..<3600: return "\(seconds / 60) min"
+        default: return "\(seconds / 3600) h"
         }
     }
 }

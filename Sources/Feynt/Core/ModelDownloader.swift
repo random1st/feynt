@@ -75,7 +75,7 @@ final class ModelDownloader: ObservableObject {
         task?.cancel()
         task = nil
         isDownloading = false
-        detail = "отменено"
+        detail = "cancelled"
     }
 
     /// Drives the progress bar from bytes actually written under the models root.

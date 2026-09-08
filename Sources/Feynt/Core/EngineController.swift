@@ -48,7 +48,7 @@ final class EngineController: ObservableObject {
 
     func load(_ spec: ModelSpec) async {
         guard let modelDirectory = ModelResolver.installedLocation(for: spec) else {
-            state = .failed("Модель \(spec.title) не найдена на диске")
+            state = .failed("\(spec.title) is not on disk")
             return
         }
         state = .loading
@@ -158,11 +158,11 @@ final class EngineController: ObservableObject {
 
     var statusText: String {
         switch state {
-        case .unloaded: return "выгружена"
-        case .loading: return "загрузка…"
-        case .ready: return "готова"
-        case .generating: return "генерация"
-        case .failed(let message): return "ошибка: \(message)"
+        case .unloaded: return "unloaded"
+        case .loading: return "loading…"
+        case .ready: return "ready"
+        case .generating: return "generating"
+        case .failed(let message): return "error: \(message)"
         }
     }
 

@@ -30,11 +30,11 @@ struct MainWindowView: View {
     var body: some View {
         TabView {
             ChatView(chat: chat, engine: engine)
-                .tabItem { Label("Чат", systemImage: "bubble.left.and.bubble.right") }
+                .tabItem { Label("Chat", systemImage: "bubble.left.and.bubble.right") }
             ModelView(engine: engine, settings: settings, downloader: downloader)
-                .tabItem { Label("Модель", systemImage: "cpu") }
+                .tabItem { Label("Model", systemImage: "cpu") }
             SettingsView(settings: settings, engine: engine, api: api)
-                .tabItem { Label("Настройки", systemImage: "gearshape") }
+                .tabItem { Label("Settings", systemImage: "gearshape") }
         }
         .frame(minWidth: 720, minHeight: 520)
     }

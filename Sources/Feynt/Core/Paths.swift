@@ -49,11 +49,18 @@ enum Paths {
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file
         formatter.allowedUnits = [.useGB, .useMB]
-        return formatter.string(fromByteCount: bytes)
+        // The formatter localises its units from the system, which put Russian "ГБ" next to
+        // an otherwise English interface. The UI is English, so the units are too.
+        formatter.formattingContext = .standalone
+        let text = formatter.string(fromByteCount: bytes)
+        return text.replacingOccurrences(of: "ГБ", with: "GB")
+            .replacingOccurrences(of: "МБ", with: "MB")
+            .replacingOccurrences(of: "КБ", with: "KB")
+            .replacingOccurrences(of: "байт", with: "bytes")
     }
 }
 
-/// Minimal append-only log so the "Открыть лог" menu item has something to show.
+/// Minimal append-only log so the "Open log" menu item has something to show.
 enum AppLog {
     private static let queue = DispatchQueue(label: "feynt.log")
 

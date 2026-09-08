@@ -31,8 +31,8 @@ struct WizardView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Настройка Feynt").font(.title2).bold()
-            Text("Шаг \(step + 1) из 3").foregroundStyle(.secondary).font(.callout)
+            Text("Set up Feynt").font(.title2).bold()
+            Text("Step \(step + 1) of 3").foregroundStyle(.secondary).font(.callout)
         }
     }
 
@@ -40,22 +40,22 @@ struct WizardView: View {
 
     private var requirementsStep: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Проверка ресурсов").font(.headline)
-            Text("Модель работает внутри приложения через MLX — внешние программы не нужны.")
+            Text("System check").font(.headline)
+            Text("The model runs inside the app through MLX — no external programs needed.")
                 .foregroundStyle(.secondary)
 
             checkRow(
                 ok: ramBytes >= 24_000_000_000,
-                title: "Оперативная память",
-                detail: "\(Paths.formatBytes(ramBytes)) — рекомендуется от 24 ГБ")
+                title: "Memory",
+                detail: "\(Paths.formatBytes(ramBytes)) — 24 GB or more recommended")
             checkRow(
                 ok: (freeBytes ?? 0) >= requiredBytes,
-                title: "Свободное место",
-                detail: "\(freeBytes.map(Paths.formatBytes) ?? "неизвестно") при потребности ~\(Paths.formatBytes(requiredBytes))")
+                title: "Free space",
+                detail: "\(freeBytes.map(Paths.formatBytes) ?? "unknown") free, ~\(Paths.formatBytes(requiredBytes)) needed")
 
             if ramBytes < 24_000_000_000 {
                 Label(
-                    "Памяти мало: 27B-модель в 4-битном кванте занимает ~16 ГБ. Возможны свопы и замедление.",
+                    "Low memory: a 27B model in 4-bit takes ~16 GB. Expect swapping and slowdowns.",
                     systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
             }
@@ -77,11 +77,11 @@ struct WizardView: View {
 
     private var modelStep: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Выберите модель").font(.headline)
+            Text("Choose a model").font(.headline)
             ForEach(ModelCatalog.all) { spec in
                 ModelCard(spec: spec, selected: chosen.id == spec.id) { chosen = spec }
             }
-            Text("Свободно на диске: \(freeBytes.map(Paths.formatBytes) ?? "неизвестно")")
+            Text("Free on disk: \(freeBytes.map(Paths.formatBytes) ?? "unknown")")
                 .font(.callout).foregroundStyle(.secondary)
         }
     }
@@ -91,24 +91,24 @@ struct WizardView: View {
     private var downloadStep: some View {
         VStack(alignment: .leading, spacing: 14) {
             if downloadFinished || state.missingArtifacts(for: chosen).isEmpty {
-                Text("Готово").font(.headline)
-                Text("Модель \(chosen.title) готова к работе. Приложение живёт в строке меню.")
+                Text("Ready").font(.headline)
+                Text("\(chosen.title) is ready. The app lives in the menu bar.")
                     .foregroundStyle(.secondary)
                 if let path = ModelResolver.installedLocation(for: chosen)?.path {
                     HStack {
                         Text(path).font(.system(.callout, design: .monospaced)).lineLimit(1)
-                        Button("Копировать") { copy(path) }
+                        Button("Copy") { copy(path) }
                     }
                 }
             } else {
-                Text("Загрузка").font(.headline)
-                Text(downloader.detail.isEmpty ? "Подготовка…" : downloader.detail)
+                Text("Loading").font(.headline)
+                Text(downloader.detail.isEmpty ? "Preparing…" : downloader.detail)
                     .foregroundStyle(.secondary).lineLimit(1)
                 ProgressView(value: downloader.fraction)
                 if let error = downloader.errorMessage {
                     Label(error, systemImage: "xmark.octagon").foregroundStyle(.red)
                 }
-                Button("Отменить") { downloader.cancel() }
+                Button("Cancel") { downloader.cancel() }
                     .disabled(!downloader.isDownloading)
             }
         }
@@ -119,16 +119,16 @@ struct WizardView: View {
     private var footer: some View {
         HStack {
             if step > 0 {
-                Button("Назад") { step -= 1 }.disabled(downloader.isDownloading)
+                Button("Back") { step -= 1 }.disabled(downloader.isDownloading)
             }
             Spacer()
             switch step {
             case 0:
-                Button("Далее") { step = 1 }
+                Button("Next") { step = 1 }
             case 1:
                 Button(nextTitle) { startStepThree() }
             default:
-                Button("Завершить") { state.finishWizard(with: chosen) }
+                Button("Finish") { state.finishWizard(with: chosen) }
                     .keyboardShortcut(.defaultAction)
                     .disabled(!(downloadFinished || state.missingArtifacts(for: chosen).isEmpty))
             }
@@ -136,7 +136,7 @@ struct WizardView: View {
     }
 
     private var nextTitle: String {
-        state.missingArtifacts(for: chosen).isEmpty ? "Далее" : "Скачать"
+        state.missingArtifacts(for: chosen).isEmpty ? "Next" : "Download"
     }
 
     private func startStepThree() {
@@ -178,7 +178,7 @@ private struct ModelCard: View {
                     HStack(spacing: 8) {
                         Text("~\(Paths.formatBytes(spec.approximateBytes))")
                         if ModelResolver.isPresent(spec) {
-                            Label("уже скачана", systemImage: "internaldrive")
+                            Label("already downloaded", systemImage: "internaldrive")
                                 .foregroundStyle(.green)
                         }
                     }

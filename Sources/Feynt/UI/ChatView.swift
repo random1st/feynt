@@ -36,24 +36,36 @@ struct ChatView: View {
     private var composer: some View {
         VStack(spacing: 8) {
             HStack {
-                Toggle("Размышления", isOn: $chat.thinkingEnabled)
+                Toggle("Reasoning", isOn: $chat.thinkingEnabled)
                     .toggleStyle(.switch)
                     .disabled(chat.isStreaming)
                 Spacer()
+                // The chat is the demo surface: whether speculation is on, and what it buys,
+                // belongs here rather than only behind a menu-bar click.
+                SpeedReadout(engine: engine)
                 Text(engine.statusText).font(.callout).foregroundStyle(.secondary)
-                Button("Очистить", action: chat.clear).disabled(chat.messages.isEmpty)
+                Button("Clear", action: chat.clear).disabled(chat.messages.isEmpty)
             }
             HStack(alignment: .bottom, spacing: 8) {
+                // A TextEditor swallows Return as a newline, so a plain Enter never sent
+                // anything and the only way out was a menu-less Cmd+Return nobody guesses.
+                // Return now sends, Shift+Return still breaks the line.
                 TextEditor(text: $chat.draft)
                     .font(.body)
                     .frame(minHeight: 56, maxHeight: 120)
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
                             .stroke(Color.secondary.opacity(0.3)))
+                    .onKeyPress(.return, phases: .down) { press in
+                        guard !press.modifiers.contains(.shift) else { return .ignored }
+                        guard chat.canSend else { return .handled }
+                        chat.send()
+                        return .handled
+                    }
                 if chat.isStreaming {
-                    Button("Стоп", action: chat.stop).keyboardShortcut(".", modifiers: .command)
+                    Button("Stop", action: chat.stop).keyboardShortcut(".", modifiers: .command)
                 } else {
-                    Button("Отправить", action: chat.send)
+                    Button("Send", action: chat.send)
                         .keyboardShortcut(.return, modifiers: .command)
                         .disabled(!chat.canSend)
                 }
@@ -63,13 +75,45 @@ struct ChatView: View {
     }
 }
 
+/// Live decode rate and how many drafted tokens the target accepted per round — the two
+/// numbers that say whether the speculation is working.
+private struct SpeedReadout: View {
+    @ObservedObject var engine: EngineController
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if engine.liveTokensPerSecond > 0 {
+                Label(
+                    String(format: "%.1f tok/s", engine.liveTokensPerSecond),
+                    systemImage: "speedometer")
+            }
+            if engine.stats.acceptedPerStep > 0 {
+                Label(
+                    String(format: "%.2f accepted/round", engine.stats.acceptedPerStep),
+                    systemImage: "arrow.triangle.branch")
+            }
+            if engine.state != .unloaded {
+                Text(engine.speculative ? "DFlash" : "plain")
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule().fill(
+                            (engine.speculative ? Color.green : Color.secondary).opacity(0.15)))
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .labelStyle(.titleAndIcon)
+    }
+}
+
 private struct MessageBubble: View {
     let message: ChatMessage
     @State private var reasoningExpanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(message.role == .user ? "Вы" : "Модель")
+            Text(message.role == .user ? "You" : "Model")
                 .font(.caption).foregroundStyle(.secondary)
 
             if !message.reasoning.isEmpty {
@@ -79,7 +123,7 @@ private struct MessageBubble: View {
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                 } label: {
-                    Label("Размышления", systemImage: "brain")
+                    Label("Reasoning", systemImage: "brain")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

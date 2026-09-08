@@ -100,7 +100,7 @@ final class HTTPServer {
         guard let nwPort = NWEndpoint.Port(rawValue: port) else {
             throw NSError(
                 domain: "Feynt", code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Некорректный порт \(port)"])
+                userInfo: [NSLocalizedDescriptionKey: "Invalid port \(port)"])
         }
         let parameters = NWParameters.tcp
         // Loopback only: this endpoint must never be reachable from the network.

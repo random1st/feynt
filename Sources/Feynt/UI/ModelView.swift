@@ -11,13 +11,13 @@ struct ModelView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Text("Активная модель").font(.headline)
+                Text("Active model").font(.headline)
                 ForEach(ModelCatalog.all) { spec in
                     row(for: spec)
                 }
 
                 Divider()
-                Text("Драфтер").font(.headline)
+                Text("Drafter").font(.headline)
                 drafterRow
 
                 if downloader.isDownloading {
@@ -42,16 +42,16 @@ struct ModelView: View {
                 Text(spec.title).font(.body).bold()
                 Text(spec.subtitle).foregroundStyle(.secondary)
                 Spacer()
-                Button(active ? "Активна" : "Переключить") { switchTo(spec) }
+                Button(active ? "Active" : "Switch") { switchTo(spec) }
                     .disabled(active || engine.state.isBusy || downloader.isDownloading)
             }
-            Text(location?.path ?? "не скачана")
+            Text(location?.path ?? "not downloaded")
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
             if let size = sizes[spec.id], size > 0 {
-                Text("На диске: \(Paths.formatBytes(size))").font(.caption)
+                Text("On disk: \(Paths.formatBytes(size))").font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
@@ -67,16 +67,16 @@ struct ModelView: View {
             HStack {
                 Text(spec.drafter.title)
                 Spacer()
-                Text(engine.speculative ? "используется" : "не активен")
+                Text(engine.speculative ? "in use" : "inactive")
                     .foregroundStyle(engine.speculative ? .green : .secondary)
             }
-            Text(ModelResolver.installedLocation(for: spec.drafter)?.path ?? "не скачан")
+            Text(ModelResolver.installedLocation(for: spec.drafter)?.path ?? "not downloaded")
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
             if engine.stats.acceptedPerStep > 0 {
-                Text(String(format: "Принято токенов за шаг: %.2f", engine.stats.acceptedPerStep))
+                Text(String(format: "Accepted tokens per round: %.2f", engine.stats.acceptedPerStep))
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
