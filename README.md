@@ -89,11 +89,3 @@ xcodebuild test -scheme Feynt -destination 'platform=macOS' -skipPackagePluginVa
 крутит веса. v1 реализован в `MLXEngine`: MTP-спекулятивное декодирование из `mlx-swift-lm`,
 с откатом на обычную генерацию, если драфтер не поддержан. Более быстрый драфтер
 подключается заменой реализации протокола — UI об этом не знает.
-
-## Установка
-
-```sh
-brew tap random1st/feynt
-brew trust random1st/feynt
-brew install --cask feynt
-```
