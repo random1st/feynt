@@ -1,0 +1,312 @@
+import Foundation
+import SwiftUI
+
+/// Cumulative counters served at `/metrics` — the same numbers the tray shows.
+struct APIMetrics: Sendable, Equatable {
+    var requests = 0
+    var promptTokens = 0
+    var completionTokens = 0
+    private var decodeSeconds: Double = 0
+    private var acceptedPerStepSum: Double = 0
+    private var acceptedSamples = 0
+
+    var meanDecodeTokensPerSecond: Double {
+        decodeSeconds > 0 ? Double(completionTokens) / decodeSeconds : 0
+    }
+    var meanAcceptLength: Double {
+        acceptedSamples > 0 ? acceptedPerStepSum / Double(acceptedSamples) : 0
+    }
+
+    mutating func record(_ stats: GenerationStats) {
+        promptTokens += stats.promptTokens
+        completionTokens += stats.generatedTokens
+        if stats.tokensPerSecond > 0 {
+            decodeSeconds += Double(stats.generatedTokens) / stats.tokensPerSecond
+        }
+        if stats.acceptedPerStep > 0 {
+            acceptedPerStepSum += stats.acceptedPerStep
+            acceptedSamples += 1
+        }
+    }
+}
+
+/// Serialises generations. The engine holds one model and the GPU is not shareable, so a
+/// second request waits rather than interleaving.
+actor GenerationGate {
+    private var busy = false
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        if !busy {
+            busy = true
+            return
+        }
+        await withCheckedContinuation { waiting.append($0) }
+    }
+
+    func release() {
+        if waiting.isEmpty {
+            busy = false
+        } else {
+            waiting.removeFirst().resume()
+        }
+    }
+}
+
+/// OpenAI-compatible endpoint served from inside the app, so external clients keep working
+/// after the Python server was dropped.
+@MainActor
+final class APIServer: ObservableObject, EngineLifecycleObserver {
+    @Published private(set) var isRunning = false
+    @Published private(set) var metrics = APIMetrics()
+    @Published private(set) var lastError: String?
+
+    private var http: HTTPServer?
+    private let gate = GenerationGate()
+    private unowned let engine: EngineController
+    private let settings: AppSettings
+
+    init(engine: EngineController, settings: AppSettings) {
+        self.engine = engine
+        self.settings = settings
+    }
+
+    var baseURL: String { "http://127.0.0.1:\(settings.port)/v1" }
+
+    func start() {
+        guard !isRunning else { return }
+        let server = HTTPServer { [weak self] request, responder in
+            Task { @MainActor in self?.route(request, responder) }
+        }
+        do {
+            try server.start(port: UInt16(clamping: settings.port))
+            http = server
+            isRunning = true
+            lastError = nil
+            AppLog.write("api server listening on 127.0.0.1:\(settings.port)")
+        } catch {
+            lastError = error.localizedDescription
+            AppLog.write("api server failed: \(error.localizedDescription)")
+        }
+    }
+
+    func stop() {
+        http?.stop()
+        http = nil
+        isRunning = false
+    }
+
+    /// Re-bind after a port change; silently does nothing when the server is stopped.
+    func restartIfRunning() {
+        guard isRunning else { return }
+        stop()
+        start()
+    }
+
+    func engineDidLoad() { start() }
+
+    func engineDidUnload() { stop() }
+
+    // MARK: - Routing
+
+    private func route(_ request: HTTPRequest, _ responder: HTTPResponder) {
+        let path = request.path.components(separatedBy: "?").first ?? request.path
+        switch (request.method, path) {
+        case ("GET", "/health"):
+            responder.sendJSON(status: 200, object: healthPayload())
+        case ("GET", "/metrics"):
+            responder.sendJSON(status: 200, object: metricsPayload())
+        case ("GET", "/v1/models"):
+            responder.sendJSON(status: 200, object: modelsPayload())
+        case ("POST", "/v1/chat/completions"):
+            handleCompletion(request, responder)
+        case ("OPTIONS", _):
+            responder.send(status: 200, contentType: "text/plain", body: Data())
+        default:
+            responder.sendJSON(
+                status: 404, object: ["error": ["message": "unknown route \(path)"]])
+        }
+    }
+
+    private func healthPayload() -> [String: Any] {
+        var payload: [String: Any] = [
+            "model": settings.selectedModel.repo,
+            "mode": engine.speculative ? "mtp" : "plain",
+        ]
+        switch engine.state {
+        case .ready, .generating: payload["status"] = "ok"
+        case .loading: payload["status"] = "loading"
+        case .failed(let message):
+            payload["status"] = "error"
+            payload["error"] = message
+        case .unloaded: payload["status"] = "no_model"
+        }
+        return payload
+    }
+
+    private func metricsPayload() -> [String: Any] {
+        [
+            "model": settings.selectedModel.repo,
+            "mode": engine.speculative ? "mtp" : "plain",
+            "requests": metrics.requests,
+            "prompt_tokens": metrics.promptTokens,
+            "completion_tokens": metrics.completionTokens,
+            "mean_decode_tokens_per_sec": metrics.meanDecodeTokensPerSecond,
+            "mean_accept_len": metrics.meanAcceptLength,
+        ]
+    }
+
+    private func modelsPayload() -> [String: Any] {
+        let created = Int(Date().timeIntervalSince1970)
+        let ids = ["local", settings.selectedModel.repo]
+        return [
+            "object": "list",
+            "data": ids.map {
+                ["id": $0, "object": "model", "created": created, "owned_by": "qwenlocal"]
+            },
+        ]
+    }
+
+    // MARK: - Chat completions
+
+    private func handleCompletion(_ request: HTTPRequest, _ responder: HTTPResponder) {
+        guard let parsed = ChatRequest(body: request.body) else {
+            responder.sendJSON(
+                status: 400, object: ["error": ["message": "invalid JSON body"]])
+            return
+        }
+        metrics.requests += 1
+
+        Task { [weak self] in
+            guard let self else { return }
+            // One generation at a time; everything else queues behind this.
+            await self.gate.acquire()
+            defer { Task { await self.gate.release() } }
+            await self.run(parsed, responder: responder)
+        }
+    }
+
+    private func run(_ request: ChatRequest, responder: HTTPResponder) async {
+        guard await engine.ensureLoaded() else {
+            responder.sendJSON(
+                status: 503, object: ["error": ["message": "модель не загружена"]])
+            return
+        }
+
+        let options = GenerationOptions(
+            maxTokens: request.maxTokens,
+            temperature: request.temperature,
+            thinking: request.thinking ?? settings.thinkingByDefault)
+
+        let stream: AsyncStream<EngineEvent>
+        do {
+            stream = try await engine.generate(turns: request.turns, options: options)
+        } catch {
+            responder.sendJSON(
+                status: 503, object: ["error": ["message": error.localizedDescription]])
+            return
+        }
+
+        let id = "chatcmpl-\(UUID().uuidString.prefix(24))"
+        let model = settings.selectedModel.repo
+        var text = ""
+        var reasoning = ""
+        var stats = GenerationStats()
+
+        if request.stream { responder.beginEventStream() }
+
+        for await event in stream {
+            switch event {
+            case .text(let chunk):
+                text += chunk
+                if request.stream {
+                    responder.writeEvent(
+                        Self.sseChunk(id: id, model: model, delta: ["content": chunk]))
+                }
+            case .reasoning(let chunk):
+                reasoning += chunk
+                if request.stream {
+                    responder.writeEvent(
+                        Self.sseChunk(id: id, model: model, delta: ["reasoning_content": chunk]))
+                }
+            case .finished(let value):
+                stats = value
+            }
+        }
+
+        metrics.record(stats)
+        engine.generationFinished(stats)
+
+        if request.stream {
+            responder.writeEvent(
+                Self.sseChunk(id: id, model: model, delta: [:], finish: "stop"))
+            responder.writeEvent("data: [DONE]\n\n")
+            responder.finish()
+        } else {
+            var message: [String: Any] = ["role": "assistant", "content": text]
+            // The existing client reads the thinking block from this field.
+            if !reasoning.isEmpty { message["reasoning_content"] = reasoning }
+            responder.sendJSON(
+                status: 200,
+                object: [
+                    "id": id,
+                    "object": "chat.completion",
+                    "created": Int(Date().timeIntervalSince1970),
+                    "model": model,
+                    "choices": [["index": 0, "message": message, "finish_reason": "stop"]],
+                    "usage": [
+                        "prompt_tokens": stats.promptTokens,
+                        "completion_tokens": stats.generatedTokens,
+                        "total_tokens": stats.promptTokens + stats.generatedTokens,
+                    ],
+                ])
+        }
+    }
+
+    private static func sseChunk(
+        id: String, model: String, delta: [String: Any], finish: String? = nil
+    ) -> String {
+        let payload: [String: Any] = [
+            "id": id,
+            "object": "chat.completion.chunk",
+            "created": Int(Date().timeIntervalSince1970),
+            "model": model,
+            "choices": [
+                ["index": 0, "delta": delta, "finish_reason": finish as Any? ?? NSNull()]
+            ],
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8)
+        else { return "" }
+        return "data: \(json)\n\n"
+    }
+}
+
+/// Lenient decode: unknown fields are ignored rather than rejected, because clients send
+/// plenty of OpenAI parameters this engine has no use for.
+private struct ChatRequest {
+    let turns: [EngineTurn]
+    let maxTokens: Int
+    let temperature: Float
+    let stream: Bool
+    let thinking: Bool?
+
+    init?(body: Data) {
+        guard let root = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+            return nil
+        }
+        let rawMessages = root["messages"] as? [[String: Any]] ?? []
+        turns = rawMessages.compactMap { entry in
+            guard let content = entry["content"] as? String else { return nil }
+            let role = EngineTurn.Role(rawValue: entry["role"] as? String ?? "user") ?? .user
+            return EngineTurn(role: role, content: content)
+        }
+        guard !turns.isEmpty else { return nil }
+
+        maxTokens = (root["max_tokens"] as? Int) ?? (root["max_completion_tokens"] as? Int) ?? 2048
+        temperature = (root["temperature"] as? NSNumber).map { $0.floatValue } ?? 0.7
+        stream = (root["stream"] as? Bool) ?? false
+        let kwargs = root["chat_template_kwargs"] as? [String: Any]
+        thinking = kwargs?["enable_thinking"] as? Bool
+    }
+}
