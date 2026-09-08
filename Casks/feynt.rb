@@ -1,6 +1,6 @@
 cask "feynt" do
   version "0.1.0"
-  sha256 "edcdcfd48b3f5ed5b3f5a51a403bdf4086bda5e41b04c23cc826e09d89665b31"
+  sha256 "25a27408e1cb714eed6f4c649d9cd6e3db74149235de457c374212e34772998d"
 
   url "https://github.com/random1st/feynt/releases/download/v#{version}/Feynt-#{version}.dmg"
   name "Feynt"
@@ -20,7 +20,6 @@ cask "feynt" do
     "~/Library/Preferences/com.random1st.feynt.plist",
   ]
 
-  # Signed with a Developer ID and notarised by Apple, so the first launch needs
-  # no quarantine dance. The ticket is not stapled into the disk image, so that
-  # first launch does check with Apple and therefore wants a network.
+  # Signed with a Developer ID, notarised by Apple and stapled, so the first
+  # launch needs neither a quarantine dance nor a network round-trip.
 end

@@ -9,10 +9,14 @@ let package = Package(
     name: "Feynt",
     platforms: [.macOS(.v14)],
     dependencies: [
-        .package(path: "../mlx-swift-lm"),
+        // Apple's package plus two patches this drafter needs: hidden states from a
+        // chosen ladder of target layers, and capture/rollback of a speculative round's
+        // gated-delta recurrence. Both are proposed upstream; when they land this becomes
+        // an ordinary versioned dependency on ml-explore/mlx-swift-lm.
+        .package(url: "https://github.com/random1st/mlx-swift-lm", branch: "dflash-multilayer-tap"),
         // The DFlash 2 drafter that replaced the MTP path; a sibling checkout for the same
         // reason — it is built against the multilayer-tap patch in mlx-swift-lm above.
-        .package(path: "../dflash-swift"),
+        .package(url: "https://github.com/random1st/dflash-swift", branch: "main"),
         .package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.0"),
     ],
