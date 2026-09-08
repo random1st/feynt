@@ -28,6 +28,15 @@ echo "== version $VERSION"
 
 FEYNT_SIGN_IDENTITY="$IDENTITY" "$ROOT/package-app.sh" release
 
+# Приложение получает свой билет ДО того, как попадёт в DMG.
+echo "== app ticket"
+ZIP="$ROOT/build/Feynt-app.zip"
+rm -f "$ZIP"
+ditto -c -k --keepParent "$APP" "$ZIP"
+xcrun notarytool submit "$ZIP" --keychain-profile "$PROFILE" --wait
+xcrun stapler staple "$APP"
+rm -f "$ZIP"
+
 echo "== DMG"
 rm -f "$DMG"
 STAGE="$(mktemp -d)"
