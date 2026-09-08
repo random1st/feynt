@@ -7,7 +7,7 @@ cask "feynt" do
   desc "Local LLM on Apple Silicon with DFlash 2 speculative decoding"
   homepage "https://github.com/random1st/feynt"
 
-  depends_on macos: ">= :sonoma"
+  depends_on macos: :sonoma
   depends_on arch: :arm64
 
   app "Feynt.app"
