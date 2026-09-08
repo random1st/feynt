@@ -1,6 +1,15 @@
 {
   "pins" : [
     {
+      "identity" : "dflash-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/random1st/dflash-swift",
+      "state" : {
+        "branch" : "main",
+        "revision" : "cf4193498b3349961ab3bf92ddcb258626634f7d"
+      }
+    },
+    {
       "identity" : "eventsource",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/mattt/EventSource.git",

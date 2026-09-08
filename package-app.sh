@@ -127,6 +127,9 @@ if [ "${#RES_BUNDLES[@]}" -gt 0 ]; then
         sign "$bundle"
     done
 fi
+# The metallib is a Mach-O object, and codesign will not seal an app whose MacOS/ holds an
+# unsigned one: "code object is not signed at all. In subcomponent: .../mlx.metallib".
+sign "$APP/Contents/MacOS/mlx.metallib"
 sign "$APP/Contents/MacOS/Feynt" --entitlements "$PKG/Feynt.entitlements"
 sign "$APP" --entitlements "$PKG/Feynt.entitlements"
 
