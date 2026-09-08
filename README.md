@@ -1,4 +1,4 @@
-# QwenLocal
+# Feynt
 
 Лаунчер для одной локальной модели: строка меню, чат и мастер первого запуска. Не менеджер
 моделей — выбор ровно из двух вариантов, без поиска и без произвольных репозиториев.
@@ -60,7 +60,7 @@ swift build -c release # релизная
 ## Сборка .app
 
 ```sh
-./package-app.sh            # debug → build/QwenLocal.app
+./package-app.sh            # debug → build/Feynt.app
 ./package-app.sh release    # оптимизированная сборка
 ```
 
@@ -68,7 +68,7 @@ swift build -c release # релизная
 Для распространяемой сборки:
 
 ```sh
-QWENLOCAL_SIGN_IDENTITY="Developer ID Application: …" ./package-app.sh release
+FEYNT_SIGN_IDENTITY="Developer ID Application: …" ./package-app.sh release
 ```
 
 Скрипт идемпотентен: старый бандл удаляется целиком, ресурсные бандлы SwiftPM получают
@@ -80,12 +80,12 @@ QWENLOCAL_SIGN_IDENTITY="Developer ID Application: …" ./package-app.sh release
 из SwiftPM-теста `mlx-swift` не находит свой metallib.
 
 ```sh
-xcodebuild test -scheme QwenLocal -destination 'platform=macOS' -skipPackagePluginValidation
+xcodebuild test -scheme Feynt -destination 'platform=macOS' -skipPackagePluginValidation
 ```
 
 ## Архитектура
 
-`InferenceEngine` (`Sources/QwenLocal/Core/InferenceEngine.swift`) — шов между UI и тем, что
+`InferenceEngine` (`Sources/Feynt/Core/InferenceEngine.swift`) — шов между UI и тем, что
 крутит веса. v1 реализован в `MLXEngine`: MTP-спекулятивное декодирование из `mlx-swift-lm`,
 с откатом на обычную генерацию, если драфтер не поддержан. Более быстрый драфтер
 подключается заменой реализации протокола — UI об этом не знает.

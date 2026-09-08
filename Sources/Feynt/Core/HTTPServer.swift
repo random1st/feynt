@@ -82,7 +82,7 @@ final class HTTPResponder {
 final class HTTPServer {
     typealias Handler = (HTTPRequest, HTTPResponder) -> Void
 
-    private let queue = DispatchQueue(label: "qwenlocal.http", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "feynt.http", qos: .userInitiated)
     private var listener: NWListener?
     private let handler: Handler
 
@@ -99,7 +99,7 @@ final class HTTPServer {
         stop()
         guard let nwPort = NWEndpoint.Port(rawValue: port) else {
             throw NSError(
-                domain: "QwenLocal", code: 1,
+                domain: "Feynt", code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "Некорректный порт \(port)"])
         }
         let parameters = NWParameters.tcp

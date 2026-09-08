@@ -1,12 +1,12 @@
 #!/bin/bash
-# Package the SwiftPM QwenLocal executable into a drag-and-drop QwenLocal.app.
+# Package the SwiftPM Feynt executable into a drag-and-drop Feynt.app.
 #
 # SwiftPM only produces a bare executable; macOS needs a bundle with an Info.plist
 # (LSUIElement, so the app is menu-bar-first) and a signature carrying the JIT
 # entitlement MLX's runtime Metal codegen requires.
 #
 # Ad-hoc signing (`-`) is the default so the script works on any machine without a
-# Developer ID. Override with QWENLOCAL_SIGN_IDENTITY for a distributable build.
+# Developer ID. Override with FEYNT_SIGN_IDENTITY for a distributable build.
 #
 # Usage: ./package-app.sh [debug|release]
 set -euo pipefail
@@ -15,8 +15,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 PKG="$ROOT/packaging"
 CONFIG="${1:-debug}"
-APP="$ROOT/build/QwenLocal.app"
-IDENTITY="${QWENLOCAL_SIGN_IDENTITY:--}"
+APP="$ROOT/build/Feynt.app"
+IDENTITY="${FEYNT_SIGN_IDENTITY:--}"
 
 if [ "$CONFIG" != "debug" ] && [ "$CONFIG" != "release" ]; then
     echo "usage: $(basename "$0") [debug|release]" >&2
@@ -38,7 +38,7 @@ echo "2. Assembling $APP ..."
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$PKG/Info.plist" "$APP/Contents/Info.plist"
-cp "$BIN_DIR/QwenLocal" "$APP/Contents/MacOS/QwenLocal"
+cp "$BIN_DIR/Feynt" "$APP/Contents/MacOS/Feynt"
 
 # SwiftPM resource bundles (Bundle.module) are resolved next to the executable. They are
 # emitted as FLAT directories with no Info.plist, which codesign rejects with "bundle format
@@ -56,7 +56,7 @@ for bundle in "$BIN_DIR"/*.bundle; do
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleIdentifier</key><string>com.random1st.qwenlocal.resources.$name</string>
+    <key>CFBundleIdentifier</key><string>com.random1st.feynt.resources.$name</string>
     <key>CFBundleName</key><string>$name</string>
     <key>CFBundlePackageType</key><string>BNDL</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
@@ -76,7 +76,7 @@ for lib in "$BIN_DIR"/*.metallib; do
 done
 
 if [ "$IDENTITY" = "-" ]; then
-    echo "3. Codesigning (ad-hoc; set QWENLOCAL_SIGN_IDENTITY for a Developer ID)..."
+    echo "3. Codesigning (ad-hoc; set FEYNT_SIGN_IDENTITY for a Developer ID)..."
 else
     echo "3. Codesigning as '$IDENTITY' (hardened runtime + timestamp)..."
 fi
@@ -100,8 +100,8 @@ if [ "${#RES_BUNDLES[@]}" -gt 0 ]; then
         sign "$bundle"
     done
 fi
-sign "$APP/Contents/MacOS/QwenLocal" --entitlements "$PKG/QwenLocal.entitlements"
-sign "$APP" --entitlements "$PKG/QwenLocal.entitlements"
+sign "$APP/Contents/MacOS/Feynt" --entitlements "$PKG/Feynt.entitlements"
+sign "$APP" --entitlements "$PKG/Feynt.entitlements"
 
 echo "4. Verifying..."
 codesign --verify --strict --verbose=2 "$APP"

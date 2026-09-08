@@ -5,13 +5,13 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>ru</string>
     <key>CFBundleDisplayName</key>
-    <string>QwenLocal</string>
+    <string>Feynt</string>
     <key>CFBundleName</key>
-    <string>QwenLocal</string>
+    <string>Feynt</string>
     <key>CFBundleExecutable</key>
-    <string>QwenLocal</string>
+    <string>Feynt</string>
     <key>CFBundleIdentifier</key>
-    <string>com.random1st.qwenlocal</string>
+    <string>com.random1st.feynt</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundlePackageType</key>

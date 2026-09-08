@@ -2,12 +2,12 @@ import AppKit
 import SwiftUI
 
 @main
-struct QwenLocalApp: App {
+struct FeyntApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var state = AppState.shared
 
     var body: some Scene {
-        Window("QwenLocal", id: MainWindowID.value) {
+        Window("Feynt", id: MainWindowID.value) {
             RootView(settings: state.settings)
                 .environmentObject(state)
         }

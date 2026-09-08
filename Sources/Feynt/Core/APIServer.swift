@@ -162,7 +162,7 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
         return [
             "object": "list",
             "data": ids.map {
-                ["id": $0, "object": "model", "created": created, "owned_by": "qwenlocal"]
+                ["id": $0, "object": "model", "created": created, "owned_by": "feynt"]
             },
         ]
     }

@@ -6,15 +6,15 @@ enum Paths {
 
     /// Where models this app downloads are installed.
     static var modelsRoot: URL {
-        home.appending(path: "Library/Application Support/QwenLocal/models", directoryHint: .isDirectory)
+        home.appending(path: "Library/Application Support/Feynt/models", directoryHint: .isDirectory)
     }
 
     static var logDirectory: URL {
-        home.appending(path: "Library/Logs/QwenLocal", directoryHint: .isDirectory)
+        home.appending(path: "Library/Logs/Feynt", directoryHint: .isDirectory)
     }
 
     static var logFile: URL {
-        logDirectory.appending(path: "qwen-local.log")
+        logDirectory.appending(path: "feynt.log")
     }
 
     static func ensureDirectory(_ url: URL) {
@@ -55,7 +55,7 @@ enum Paths {
 
 /// Minimal append-only log so the "Открыть лог" menu item has something to show.
 enum AppLog {
-    private static let queue = DispatchQueue(label: "qwenlocal.log")
+    private static let queue = DispatchQueue(label: "feynt.log")
 
     static func write(_ message: String) {
         queue.async {

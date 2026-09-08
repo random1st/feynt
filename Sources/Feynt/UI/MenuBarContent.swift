@@ -83,5 +83,5 @@ struct MenuBarContent: View {
 }
 
 enum MainWindowID {
-    static let value = "qwenlocal.main"
+    static let value = "feynt.main"
 }

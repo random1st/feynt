@@ -6,7 +6,7 @@ import PackageDescription
 // tree carries the local patch for the DFlash2 drafter port. mlx-swift itself is pulled
 // transitively from GitHub by that manifest.
 let package = Package(
-    name: "QwenLocal",
+    name: "Feynt",
     platforms: [.macOS(.v14)],
     dependencies: [
         .package(path: "../mlx-swift-lm"),
@@ -18,7 +18,7 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "QwenLocal",
+            name: "Feynt",
             dependencies: [
                 .product(name: "DFlashKit", package: "dflash-swift"),
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
@@ -27,6 +27,6 @@ let package = Package(
                 .product(name: "HuggingFace", package: "swift-huggingface"),
                 .product(name: "Tokenizers", package: "swift-transformers"),
             ],
-            path: "Sources/QwenLocal")
+            path: "Sources/Feynt")
     ]
 )

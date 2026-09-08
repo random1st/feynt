@@ -31,7 +31,7 @@ struct WizardView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Настройка QwenLocal").font(.title2).bold()
+            Text("Настройка Feynt").font(.title2).bold()
             Text("Шаг \(step + 1) из 3").foregroundStyle(.secondary).font(.callout)
         }
     }
