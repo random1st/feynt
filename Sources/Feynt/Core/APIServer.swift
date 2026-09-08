@@ -105,7 +105,12 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
 
     func engineDidLoad() { start() }
 
-    func engineDidUnload() { stop() }
+    /// Deliberately not `stop()`. The idle timeout unloads the weights, which is the whole
+    /// point of it, but a client that then connects should get an answer rather than a
+    /// refused connection: `run(_:responder:)` reloads on demand. Tearing the listener down
+    /// made the two features contradict each other - the endpoint a user copied out of the
+    /// menu bar stopped existing five minutes after they last used it.
+    func engineDidUnload() {}
 
     // MARK: - Routing
 

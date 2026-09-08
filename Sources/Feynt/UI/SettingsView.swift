@@ -27,8 +27,8 @@ struct SettingsView: View {
             Section("Generating") {
                 Toggle("Reasoning by default", isOn: $settings.thinkingByDefault)
                 Stepper(
-                    "Max tokens: \(settings.maxTokens)",
-                    value: $settings.maxTokens, in: 256 ... 8192, step: 256)
+                    "Reply length: \(settings.maxTokens) tokens",
+                    value: $settings.maxTokens, in: 256 ... 32768, step: 256)
             }
 
             Section("Memory") {

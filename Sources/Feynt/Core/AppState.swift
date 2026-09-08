@@ -27,6 +27,12 @@ final class AppState: ObservableObject {
         self.downloader = ModelDownloader()
         self.chat = ChatStore(engine: engine, settings: settings)
         engine.lifecycle = api
+        // Listening from launch, not from the first load: a client should be able to wake a
+        // configured model by asking for a completion, the same way it wakes one after the
+        // idle timeout has unloaded it.
+        if settings.wizardCompleted {
+            api.start()
+        }
     }
 
     /// The two catalog models plus the shared drafter, in the order the wizard downloads them.
