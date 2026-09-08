@@ -1,6 +1,6 @@
 cask "feynt" do
-  version "0.2.0"
-  sha256 "6ab5daa27b08fabe1e192724e85f1c268b45c147d6f15a4e01e0e43160d9bb0e"
+  version "0.2.1"
+  sha256 "314756e60eda040c2557c336c3447dd7fba96723a82332ebfa9c93f4a230cf12"
 
   url "https://github.com/random1st/feynt/releases/download/v#{version}/Feynt-#{version}.dmg"
   name "Feynt"
