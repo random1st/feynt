@@ -6,6 +6,9 @@ import Foundation
 /// entry has a matching DFlash drafter. A target without one runs at plain decode speed,
 /// which is the one thing this app exists to avoid, so listing it would sell a promise the
 /// app cannot keep for that row.
+/// Sizes are the repository's root listing measured on the Hub, not estimates: they drive
+/// the free-space check and the download bar, and a repository that publishes several
+/// quantisations makes a guess wrong by a factor of six.
 struct ModelSpec: Identifiable, Hashable {
     let id: String
     let title: String
@@ -41,9 +44,9 @@ enum ModelCatalog {
         title: "Qwen3.8-27B Uncensored",
         subtitle: "uncensored",
         repo: "orcarouter/Qwen3.8-27B-Uncensored-MLX",
-        approximateBytes: 16_000_000_000,
+        approximateBytes: 16_100_000_000,
         drafterRepo: dflash2_27B,
-        drafterApproximateBytes: 3_700_000_000)
+        drafterApproximateBytes: 3_800_000_000)
 
     static let stock = ModelSpec(
         id: "stock",
@@ -61,7 +64,7 @@ enum ModelCatalog {
         repo: "mlx-community/Qwen3.6-27B-4bit",
         approximateBytes: 16_000_000_000,
         drafterRepo: "z-lab/Qwen3.6-27B-DFlash",
-        drafterApproximateBytes: 3_700_000_000)
+        drafterApproximateBytes: 3_500_000_000)
 
     static let qwen35 = ModelSpec(
         id: "qwen35-27b",
@@ -70,7 +73,7 @@ enum ModelCatalog {
         repo: "mlx-community/Qwen3.5-27B-4bit",
         approximateBytes: 16_000_000_000,
         drafterRepo: "z-lab/Qwen3.5-27B-DFlash",
-        drafterApproximateBytes: 3_700_000_000)
+        drafterApproximateBytes: 4_300_000_000)
 
     /// The small one: fits comfortably where a 27B does not, and answers sooner.
     static let qwen35small = ModelSpec(
@@ -78,9 +81,9 @@ enum ModelCatalog {
         title: "Qwen3.5-9B",
         subtitle: "light",
         repo: "mlx-community/Qwen3.5-9B-4bit",
-        approximateBytes: 5_500_000_000,
+        approximateBytes: 6_000_000_000,
         drafterRepo: "z-lab/Qwen3.5-9B-DFlash",
-        drafterApproximateBytes: 1_600_000_000)
+        drafterApproximateBytes: 2_600_000_000)
 
     /// Mixture-of-experts targets. Only about 3B of the 35B parameters are read per token,
     /// and decode here is bound by exactly that traffic, so these run several times faster
@@ -90,18 +93,18 @@ enum ModelCatalog {
         title: "Qwen3.6-35B-A3B",
         subtitle: "MoE, the fastest",
         repo: "mlx-community/Qwen3.6-35B-A3B-4bit",
-        approximateBytes: 20_000_000_000,
+        approximateBytes: 20_400_000_000,
         drafterRepo: "z-lab/Qwen3.6-35B-A3B-DFlash",
-        drafterApproximateBytes: 3_700_000_000)
+        drafterApproximateBytes: 800_000_000)
 
     static let qwen35moe = ModelSpec(
         id: "qwen35-35b-a3b",
         title: "Qwen3.5-35B-A3B",
         subtitle: "MoE",
         repo: "mlx-community/Qwen3.5-35B-A3B-4bit",
-        approximateBytes: 20_000_000_000,
+        approximateBytes: 20_400_000_000,
         drafterRepo: "z-lab/Qwen3.5-35B-A3B-DFlash",
-        drafterApproximateBytes: 3_700_000_000)
+        drafterApproximateBytes: 800_000_000)
 
     static let all: [ModelSpec] = [
         uncensored, stock, qwen36moe, qwen36, qwen35moe, qwen35, qwen35small,

@@ -19,7 +19,7 @@ final class ModelDownloader: ObservableObject {
     private var task: Task<Void, Never>?
 
     /// Weights, configs and chat templates; everything else in a repo is dead weight here.
-    private let patterns = ["*.safetensors", "*.json", "*.jinja", "*.txt", "*.model"]
+    private static let wanted = [".safetensors", ".json", ".jinja", ".txt", ".model"]
 
     func download(_ specs: [ModelSpec], completion: @escaping (Bool) -> Void) {
         guard !isDownloading else { return }
@@ -47,7 +47,7 @@ final class ModelDownloader: ObservableObject {
                             Task { @MainActor [weak self] in self?.fraction = value }
                         })
                     defer { watcher.cancel() }
-                    let url = try await Self.fetch(spec: spec, patterns: self.patterns) { value, text in
+                    let url = try await Self.fetch(spec: spec) { value, text in
                         Task { @MainActor [weak self] in
                             if value >= 0 { self?.fraction = value }
                             if !text.isEmpty { self?.detail = text }
@@ -96,15 +96,39 @@ final class ModelDownloader: ObservableObject {
         }
     }
 
+    /// The files to fetch, named one by one from the repository's root listing.
+    ///
+    /// A glob will not do. The client matches with `fnmatch` and no `FNM_PATHNAME`, so `*`
+    /// crosses directory separators and `*.safetensors` takes every file in every
+    /// subdirectory. Repositories that publish several quantisations of the same weights -
+    /// the uncensored 27B ships 2-, 4-, 6- and 8-bit, with the 4-bit one at the root - then
+    /// turn a 16 GB download into a 95 GB one, which is what a user sees before anything
+    /// else has gone wrong.
+    ///
+    /// So the root is listed and its files are named exactly. Nothing recursive is ever
+    /// asked for, and a repository that rearranges itself fails loudly here rather than
+    /// silently pulling five copies of a model.
+    private static func rootFiles(_ client: HubClient, repo: String) async throws -> [String] {
+        let tree = try await client.modelTree(Repo.ID(stringLiteral: repo))
+        return tree
+            .filter { $0.type == .file && !$0.path.contains("/") }
+            .map(\.path)
+            .filter { path in wanted.contains { path.hasSuffix($0) } }
+    }
+
     private static func fetch(
-        spec: ModelSpec, patterns: [String],
+        spec: ModelSpec,
         onProgress: @Sendable @escaping (Double, String) -> Void
     ) async throws -> URL {
         Paths.ensureDirectory(Paths.modelsRoot)
         let client = HubClient(cache: HubCache(cacheDirectory: Paths.modelsRoot))
+        let files = try await rootFiles(client, repo: spec.repo)
+        guard files.contains(where: { $0.hasSuffix(".safetensors") }) else {
+            throw DownloadError.noWeightsAtRoot(spec.repo)
+        }
         let downloader = #hubDownloader(client)
         return try await downloader.download(
-            id: spec.repo, revision: nil, matching: patterns, useLatest: false
+            id: spec.repo, revision: nil, matching: files, useLatest: false
         ) { progress in
             // Only the detail text is used from here. Measured against a real repo, both
             // `fractionCompleted` and the unit counts advance in rare jumps - fine for an
@@ -112,6 +136,17 @@ final class ModelDownloader: ObservableObject {
             // and the app would read as hung. The caller drives the bar from bytes on disk
             // instead; see `observeBytes`.
             onProgress(-1, progress.localizedAdditionalDescription ?? "")
+        }
+    }
+}
+
+enum DownloadError: LocalizedError {
+    case noWeightsAtRoot(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .noWeightsAtRoot(let repo):
+            "\(repo) has no weights at its root — the catalog entry points at the wrong path"
         }
     }
 }

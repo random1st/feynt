@@ -78,8 +78,16 @@ struct WizardView: View {
     private var modelStep: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Choose a model").font(.headline)
-            ForEach(ModelCatalog.all) { spec in
-                ModelCard(spec: spec, selected: chosen.id == spec.id) { chosen = spec }
+            // Seven cards do not fit the window, and an unscrollable VStack does not clip
+            // the overflow at the bottom - it pushes the first row up out of sight, so the
+            // model the wizard has already selected is the one the user cannot see.
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(ModelCatalog.all) { spec in
+                        ModelCard(spec: spec, selected: chosen.id == spec.id) { chosen = spec }
+                    }
+                }
+                .padding(.trailing, 4)
             }
             Text("Free on disk: \(freeBytes.map(Paths.formatBytes) ?? "unknown")")
                 .font(.callout).foregroundStyle(.secondary)
