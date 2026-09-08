@@ -177,7 +177,14 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
     private func handleCompletion(_ request: HTTPRequest, _ responder: HTTPResponder) {
         guard let parsed = ChatRequest(body: request.body) else {
             responder.sendJSON(
-                status: 400, object: ["error": ["message": "invalid JSON body"]])
+                status: 400,
+                object: [
+                    "error": [
+                        "message":
+                            "no usable messages: expected a non-empty `messages` array whose "
+                            + "entries carry text content, as a string or as typed parts"
+                    ]
+                ])
             return
         }
         metrics.requests += 1
@@ -296,13 +303,32 @@ private struct ChatRequest {
     let stream: Bool
     let thinking: Bool?
 
+    /// OpenAI messages carry either a string or a list of typed parts, and real clients
+    /// send both: pi puts its system prompt in a string and the user's turn in
+    /// `[{"type": "text", "text": …}]`. Reading only the string form dropped that turn on
+    /// the floor, leaving a conversation with a system prompt and nothing to answer — which
+    /// the chat template rejects outright, so the request came back as a Jinja exception
+    /// rather than as anything a client could act on.
+    ///
+    /// Non-text parts (images, audio) are skipped: this engine is text-only, and a caption
+    /// invented for an image would be worse than an answer that ignores it.
+    private static func text(from content: Any?) -> String? {
+        if let text = content as? String { return text }
+        guard let parts = content as? [[String: Any]] else { return nil }
+        let pieces = parts.compactMap { part -> String? in
+            guard part["type"] as? String == "text" else { return nil }
+            return part["text"] as? String
+        }
+        return pieces.isEmpty ? nil : pieces.joined(separator: "\n")
+    }
+
     init?(body: Data) {
         guard let root = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else {
             return nil
         }
         let rawMessages = root["messages"] as? [[String: Any]] ?? []
         turns = rawMessages.compactMap { entry in
-            guard let content = entry["content"] as? String else { return nil }
+            guard let content = Self.text(from: entry["content"]) else { return nil }
             let role = EngineTurn.Role(rawValue: entry["role"] as? String ?? "user") ?? .user
             return EngineTurn(role: role, content: content)
         }
