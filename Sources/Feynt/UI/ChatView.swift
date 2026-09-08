@@ -92,6 +92,13 @@ private struct SpeedReadout: View {
                     String(format: "%.2f accepted/round", engine.stats.acceptedPerStep),
                     systemImage: "arrow.triangle.branch")
             }
+            // Why the second turn of a conversation starts answering so much sooner than
+            // the first: most of its prompt was never re-read.
+            if engine.stats.cachedPromptTokens > 0 {
+                Label(
+                    "\(engine.stats.cachedPromptTokens) cached",
+                    systemImage: "bolt.horizontal.circle")
+            }
             if engine.state != .unloaded {
                 Text(engine.speculative ? "DFlash" : "plain")
                     .padding(.horizontal, 6)

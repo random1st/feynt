@@ -23,6 +23,11 @@ actor DFlashEngine: InferenceEngine {
     /// EOS ids for the loaded target, resolved once at load time.
     private var stopTokens: Set<Int> = []
 
+    /// Recent prompts kept resident so a conversation is prefilled once rather than once
+    /// per turn. Memory spent deliberately: every turn re-sends the whole history, and
+    /// re-reading the weights for a prompt the model has already seen is the longest pause
+    /// in the app. Four conversations, capped so they cannot crowd out the weights.
+    private var prefixCache = PrefixCache(slots: 4, byteLimit: 12 << 30)
 
     init(fallback: MLXEngine = MLXEngine()) {
         self.fallback = fallback
@@ -51,13 +56,16 @@ actor DFlashEngine: InferenceEngine {
         context = loaded
         stopTokens = Self.stopTokens(for: loaded)
         await fallback.adopt(context: loaded)
-        generator = Self.makeGenerator(context: loaded, drafterDirectory: drafterDirectory)
+        // A snapshot is only valid for the model it was taken from.
+        prefixCache = PrefixCache(slots: 4, byteLimit: 12 << 30)
+        generator = Self.makeGenerator(
+            context: loaded, drafterDirectory: drafterDirectory, prefixCache: prefixCache)
     }
 
     /// Never fatal. Speculation is a speed feature, so an unsupported target or a broken
     /// drafter costs tokens per second and nothing else — the model still answers.
     private static func makeGenerator(
-        context: ModelContext, drafterDirectory: URL?
+        context: ModelContext, drafterDirectory: URL?, prefixCache: PrefixCache
     ) -> DFlashSpeculativeGenerator? {
         guard let drafterDirectory else {
             AppLog.write("drafter skipped: none configured; speculation off")
@@ -81,7 +89,8 @@ actor DFlashEngine: InferenceEngine {
             AppLog.write(
                 "loaded drafter \(drafterDirectory.lastPathComponent), "
                     + "block \(drafter.configuration.blockSize)")
-            return DFlashSpeculativeGenerator(target: target, drafter: drafter)
+            return DFlashSpeculativeGenerator(
+                target: target, drafter: drafter, prefixCache: prefixCache)
         } catch {
             AppLog.write("drafter unusable (\(error.localizedDescription)); speculation off")
             return nil
@@ -105,6 +114,9 @@ actor DFlashEngine: InferenceEngine {
         context = nil
         generator = nil
         stopTokens = []
+        // The snapshots hold GPU buffers of their own; leaving them behind would defeat the
+        // point of unloading.
+        prefixCache.clear()
         // The fallback holds the same context; both references have to go before the buffers do.
         await fallback.unload()
         MLX.Memory.clearCache()
@@ -193,6 +205,7 @@ actor DFlashEngine: InferenceEngine {
             stats.promptTokensPerSecond = Double(promptTokens) / statistics.prefillSeconds
         }
         stats.acceptedPerStep = statistics.meanAcceptedPerRound
+        stats.cachedPromptTokens = statistics.reusedPromptTokens
         stats.speculative = true
         return stats
     }

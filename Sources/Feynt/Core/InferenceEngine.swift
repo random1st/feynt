@@ -23,6 +23,8 @@ struct GenerationStats: Sendable, Equatable {
     var promptTokens: Int = 0
     /// Mean draft tokens accepted per speculative round; 0 when speculation is off.
     var acceptedPerStep: Double = 0
+    /// Prompt tokens served from the prefix cache instead of being prefilled.
+    var cachedPromptTokens: Int = 0
     var speculative: Bool = false
 }
 
