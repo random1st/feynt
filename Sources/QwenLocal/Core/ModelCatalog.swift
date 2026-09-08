@@ -82,7 +82,30 @@ enum ModelCatalog {
         drafterRepo: "z-lab/Qwen3.5-9B-DFlash",
         drafterApproximateBytes: 1_600_000_000)
 
-    static let all: [ModelSpec] = [uncensored, stock, qwen36, qwen35, qwen35small]
+    /// Mixture-of-experts targets. Only about 3B of the 35B parameters are read per token,
+    /// and decode here is bound by exactly that traffic, so these run several times faster
+    /// than a dense 27B on the same machine while holding a comparable footprint on disk.
+    static let qwen36moe = ModelSpec(
+        id: "qwen36-35b-a3b",
+        title: "Qwen3.6-35B-A3B",
+        subtitle: "MoE, самая быстрая",
+        repo: "mlx-community/Qwen3.6-35B-A3B-4bit",
+        approximateBytes: 20_000_000_000,
+        drafterRepo: "z-lab/Qwen3.6-35B-A3B-DFlash",
+        drafterApproximateBytes: 3_700_000_000)
+
+    static let qwen35moe = ModelSpec(
+        id: "qwen35-35b-a3b",
+        title: "Qwen3.5-35B-A3B",
+        subtitle: "MoE",
+        repo: "mlx-community/Qwen3.5-35B-A3B-4bit",
+        approximateBytes: 20_000_000_000,
+        drafterRepo: "z-lab/Qwen3.5-35B-A3B-DFlash",
+        drafterApproximateBytes: 3_700_000_000)
+
+    static let all: [ModelSpec] = [
+        uncensored, stock, qwen36moe, qwen36, qwen35moe, qwen35, qwen35small,
+    ]
 
     static func model(id: String) -> ModelSpec? {
         all.first { $0.id == id }
