@@ -10,6 +10,9 @@ let package = Package(
     platforms: [.macOS(.v14)],
     dependencies: [
         .package(path: "../mlx-swift-lm"),
+        // The DFlash 2 drafter that replaced the MTP path; a sibling checkout for the same
+        // reason — it is built against the multilayer-tap patch in mlx-swift-lm above.
+        .package(path: "../dflash-swift"),
         .package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.0"),
     ],
@@ -17,6 +20,7 @@ let package = Package(
         .executableTarget(
             name: "QwenLocal",
             dependencies: [
+                .product(name: "DFlashKit", package: "dflash-swift"),
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),

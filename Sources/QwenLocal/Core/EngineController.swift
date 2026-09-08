@@ -98,8 +98,13 @@ final class EngineController: ObservableObject {
     }
 
     /// Options for a UI-initiated turn; the API server builds its own from the request.
+    ///
+    /// Greedy on purpose: the DFlash loop accepts a draft only when it matches the target's
+    /// argmax, so it has no speculative sampler yet and any temperature above zero would
+    /// silently fall back to plain decoding — the chat would show "DFlash-спекуляция" while
+    /// running at half the speed. Raise this once sampling lands in the drafter.
     func uiOptions(thinking: Bool) -> GenerationOptions {
-        GenerationOptions(maxTokens: settings.maxTokens, temperature: 0.7, thinking: thinking)
+        GenerationOptions(maxTokens: settings.maxTokens, temperature: 0, thinking: thinking)
     }
 
     func generationFinished(_ stats: GenerationStats?) {

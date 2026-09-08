@@ -19,7 +19,7 @@ struct MenuBarContent: View {
     var body: some View {
         Text("\(settings.selectedModel.title) — \(engine.statusText)")
 
-        Text(engine.speculative ? "Режим: MTP-спекуляция" : "Режим: обычная генерация")
+        Text(engine.speculative ? "Режим: DFlash-спекуляция" : "Режим: обычная генерация")
 
         if engine.stats.tokensPerSecond > 0 {
             Text(String(format: "Скорость: %.1f tok/s", engine.stats.tokensPerSecond))

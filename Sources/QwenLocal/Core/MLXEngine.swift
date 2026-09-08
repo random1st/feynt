@@ -45,6 +45,17 @@ actor MLXEngine: InferenceEngine {
         }
     }
 
+    /// Take over a target somebody else already loaded.
+    ///
+    /// ``DFlashEngine`` hands its own context here so the requests its greedy loop cannot
+    /// serve fall through to ordinary MLX generation without a second 16 GB copy of the
+    /// weights becoming resident. No MTP drafter is attached: DFlash replaced that path, and
+    /// the fallback exists to be correct, not fast.
+    func adopt(context: ModelContext) {
+        self.context = context
+        drafter = nil
+    }
+
     /// A drafter failure is never fatal: speculation is a speed optimisation, so we log the
     /// reason and continue without it.
     private func loadDrafter(

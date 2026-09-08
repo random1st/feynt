@@ -15,7 +15,10 @@ final class AppState: ObservableObject {
 
     private init() {
         let settings = AppSettings()
-        let engine = EngineController(engine: MLXEngine(), settings: settings)
+        // DFlash 2 drives generation; the MLXEngine handed to it is the fallback for the
+        // requests its greedy loop does not serve, and it shares the same loaded weights.
+        let engine = EngineController(
+            engine: DFlashEngine(fallback: MLXEngine()), settings: settings)
         let api = APIServer(engine: engine, settings: settings)
         self.settings = settings
         self.engine = engine
