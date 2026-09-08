@@ -1,6 +1,6 @@
 cask "feynt" do
   version "0.1.0"
-  sha256 "50495e1677054f611a0ef399cfa0222622cc2dee875ecd956a7915906f4644fb"
+  sha256 "edcdcfd48b3f5ed5b3f5a51a403bdf4086bda5e41b04c23cc826e09d89665b31"
 
   url "https://github.com/random1st/feynt/releases/download/v#{version}/Feynt-#{version}.dmg"
   name "Feynt"
@@ -20,12 +20,7 @@ cask "feynt" do
     "~/Library/Preferences/com.random1st.feynt.plist",
   ]
 
-  caveats <<~EOS
-    The app is not notarised yet, so macOS blocks the first launch. Either run
-
-      xattr -dr com.apple.quarantine /Applications/Feynt.app
-
-    once, or allow it under System Settings > Privacy & Security after the
-    first attempt.
-  EOS
+  # Signed with a Developer ID and notarised by Apple, so the first launch needs
+  # no quarantine dance. The ticket is not stapled into the disk image, so that
+  # first launch does check with Apple and therefore wants a network.
 end
