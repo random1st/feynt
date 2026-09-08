@@ -1,3 +1,9 @@
 .build/
 build/
 .DS_Store
+
+# Локальная обвязка рабочего процесса, не часть продукта
+.s5d/
+.mcp.json
+.claude/
+AGENTS.md
