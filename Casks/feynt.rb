@@ -20,6 +20,6 @@ cask "feynt" do
     "~/Library/Preferences/com.random1st.feynt.plist",
   ]
 
-  # Signed with a Developer ID, notarised by Apple and stapled, so the first
-  # launch needs neither a quarantine dance nor a network round-trip.
+  # Signed with a Developer ID and notarised by Apple; the ticket is attached to
+  # the DMG, so Gatekeeper accepts the app without a manual quarantine dance.
 end
