@@ -10,6 +10,8 @@
     <string>Feynt</string>
     <key>CFBundleExecutable</key>
     <string>Feynt</string>
+    <key>CFBundleIconFile</key>
+    <string>icon</string>
     <key>CFBundleIdentifier</key>
     <string>com.random1st.feynt</string>
     <key>CFBundleInfoDictionaryVersion</key>
@@ -17,9 +19,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
+    <string>0.1.1</string>
     <key>CFBundleVersion</key>
-    <string>0.1.0</string>
+    <string>0.1.1</string>
     <!-- Menu-bar first: no Dock icon. The window is opened from the tray. -->
     <key>LSUIElement</key>
     <true/>

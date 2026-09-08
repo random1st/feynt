@@ -23,21 +23,34 @@ if [ "$CONFIG" != "debug" ] && [ "$CONFIG" != "release" ]; then
     exit 2
 fi
 
-echo "1. swift build ($CONFIG)..."
+# Built with xcodebuild rather than `swift build`, and not for taste: SwiftPM does not
+# emit mlx-swift's `mlx-swift_Cmlx.bundle`, which carries `default.metallib`. Without it
+# the app launches, shows its window, and then dies the moment it touches MLX —
+# "Failed to load the default metallib" on stdout, no crash report, no log line.
+XCCONFIG=$([ "$CONFIG" = "release" ] && echo Release || echo Debug)
+echo "1. xcodebuild ($XCCONFIG)..."
 cd "$ROOT"
-if [ "$CONFIG" = "release" ]; then
-    swift build -c release
-    BIN_DIR="$ROOT/.build/release"
-else
-    swift build
-    BIN_DIR="$ROOT/.build/debug"
-fi
+xcodebuild -scheme Feynt -configuration "$XCCONFIG" \
+    -destination 'platform=macOS,arch=arm64' \
+    -derivedDataPath "$ROOT/.build/xcode" \
+    -skipPackagePluginValidation -skipMacroValidation \
+    build > "$ROOT/.build/xcodebuild.log" 2>&1 || {
+        echo "xcodebuild failed; see .build/xcodebuild.log" >&2
+        grep -E "error:" "$ROOT/.build/xcodebuild.log" | head -5 >&2
+        exit 1
+    }
+BIN_DIR="$ROOT/.build/xcode/Build/Products/$XCCONFIG"
+[ -d "$BIN_DIR/mlx-swift_Cmlx.bundle" ] || {
+    echo "the Metal library bundle is missing from $BIN_DIR — the app would die on first use" >&2
+    exit 1
+}
 
 echo "2. Assembling $APP ..."
 # Idempotent: a previous bundle is replaced wholesale, never merged into.
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$PKG/Info.plist" "$APP/Contents/Info.plist"
+cp "$PKG/icon.icns" "$APP/Contents/Resources/icon.icns"
 cp "$BIN_DIR/Feynt" "$APP/Contents/MacOS/Feynt"
 
 # SwiftPM resource bundles (Bundle.module) are resolved next to the executable. They are
@@ -50,6 +63,13 @@ for bundle in "$BIN_DIR"/*.bundle; do
     name="$(basename "$bundle" .bundle)"
     cp -R "$bundle" "$APP/Contents/MacOS/"
     target="$APP/Contents/MacOS/$name.bundle"
+    # Xcode emits some dependencies as proper bundles with Contents/; dropping a plist in
+    # their root makes codesign refuse them as "unsealed contents present in the bundle
+    # root". Only the flat SwiftPM ones need the shim.
+    if [ -d "$target/Contents" ]; then
+        RES_BUNDLES+=("$target")
+        continue
+    fi
     if [ ! -f "$target/Info.plist" ]; then
         cat > "$target/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -68,12 +88,19 @@ PLIST
 done
 echo "   resource bundles: ${#RES_BUNDLES[@]}"
 
-# Metal shader libraries ship next to the binary and must travel with the app.
-for lib in "$BIN_DIR"/*.metallib; do
-    [ -f "$lib" ] || continue
-    cp "$lib" "$APP/Contents/MacOS/"
-    echo "   metallib: $(basename "$lib")"
-done
+# MLX looks for its Metal library in a fixed order, and the first place it checks is
+# `mlx.metallib` sitting next to the binary (mlx/backend/metal/device.cpp,
+# load_default_library). Shipping the SwiftPM bundle alone was not enough — inside an .app
+# the bundle lookup does not resolve, and MLX aborts the process the moment it is touched:
+# "Failed to load the default metallib", with no crash report and no log line.
+METALLIB="$(find "$BIN_DIR" -name default.metallib -print -quit 2>/dev/null || true)"
+if [ -n "$METALLIB" ]; then
+    cp "$METALLIB" "$APP/Contents/MacOS/mlx.metallib"
+    echo "   metallib: mlx.metallib"
+else
+    echo "no default.metallib under $BIN_DIR — the app would die on first use" >&2
+    exit 1
+fi
 
 if [ "$IDENTITY" = "-" ]; then
     echo "3. Codesigning (ad-hoc; set FEYNT_SIGN_IDENTITY for a Developer ID)..."
