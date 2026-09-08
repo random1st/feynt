@@ -65,7 +65,6 @@ enum ModelResolver {
             result.append(recorded)
         }
         result.append(Paths.modelsRoot.appending(path: spec.directoryName, directoryHint: .isDirectory))
-        result.append(Paths.lmStudioRoot.appending(path: spec.repo, directoryHint: .isDirectory))
         result.append(
             Paths.home.appending(
                 path: ".cache/huggingface/models/\(spec.repo)", directoryHint: .isDirectory))

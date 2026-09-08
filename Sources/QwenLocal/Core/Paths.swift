@@ -17,12 +17,6 @@ enum Paths {
         logDirectory.appending(path: "qwen-local.log")
     }
 
-    /// LM Studio keeps repos as `<root>/<org>/<name>`; both catalog models are already
-    /// there on this machine, so the resolver must look here before offering a download.
-    static var lmStudioRoot: URL {
-        home.appending(path: ".lmstudio/models", directoryHint: .isDirectory)
-    }
-
     static func ensureDirectory(_ url: URL) {
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     }

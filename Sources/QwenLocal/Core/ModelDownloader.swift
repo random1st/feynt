@@ -41,9 +41,15 @@ final class ModelDownloader: ObservableObject {
                 self.currentRepo = spec.repo
                 self.detail = spec.title
                 do {
+                    let watcher = Self.observeBytes(
+                        expected: spec.approximateBytes,
+                        update: { value in
+                            Task { @MainActor [weak self] in self?.fraction = value }
+                        })
+                    defer { watcher.cancel() }
                     let url = try await Self.fetch(spec: spec, patterns: self.patterns) { value, text in
                         Task { @MainActor [weak self] in
-                            self?.fraction = value
+                            if value >= 0 { self?.fraction = value }
                             if !text.isEmpty { self?.detail = text }
                         }
                     }
@@ -72,6 +78,24 @@ final class ModelDownloader: ObservableObject {
         detail = "отменено"
     }
 
+    /// Drives the progress bar from bytes actually written under the models root.
+    ///
+    /// The library downloader's own progress is too coarse to watch a multi-gigabyte
+    /// download by, and a bar that does not move is indistinguishable from a hang. Disk
+    /// growth is the one signal that is always truthful here.
+    private static func observeBytes(expected: Int64, update: @escaping (Double) -> Void) -> Task<Void, Never> {
+        let base = Paths.directorySize(Paths.modelsRoot)
+        return Task.detached {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(700))
+                if Task.isCancelled { return }
+                let grown = Paths.directorySize(Paths.modelsRoot) - base
+                guard expected > 0 else { continue }
+                update(min(0.99, max(0, Double(grown) / Double(expected))))
+            }
+        }
+    }
+
     private static func fetch(
         spec: ModelSpec, patterns: [String],
         onProgress: @Sendable @escaping (Double, String) -> Void
@@ -82,7 +106,12 @@ final class ModelDownloader: ObservableObject {
         return try await downloader.download(
             id: spec.repo, revision: nil, matching: patterns, useLatest: false
         ) { progress in
-            onProgress(progress.fractionCompleted, progress.localizedAdditionalDescription ?? "")
+            // Only the detail text is used from here. Measured against a real repo, both
+            // `fractionCompleted` and the unit counts advance in rare jumps - fine for an
+            // 80 MB model, but on a 16 GB one the bar would sit still for tens of minutes
+            // and the app would read as hung. The caller drives the bar from bytes on disk
+            // instead; see `observeBytes`.
+            onProgress(-1, progress.localizedAdditionalDescription ?? "")
         }
     }
 }
