@@ -41,12 +41,6 @@ final class ModelDownloader: ObservableObject {
                 self.currentRepo = spec.repo
                 self.detail = spec.title
                 do {
-                    let watcher = Self.observeBytes(
-                        expected: spec.approximateBytes,
-                        update: { value in
-                            Task { @MainActor [weak self] in self?.fraction = value }
-                        })
-                    defer { watcher.cancel() }
                     let url = try await Self.fetch(spec: spec) { value, text in
                         Task { @MainActor [weak self] in
                             if value >= 0 { self?.fraction = value }
@@ -78,24 +72,6 @@ final class ModelDownloader: ObservableObject {
         detail = "cancelled"
     }
 
-    /// Drives the progress bar from bytes actually written under the models root.
-    ///
-    /// The library downloader's own progress is too coarse to watch a multi-gigabyte
-    /// download by, and a bar that does not move is indistinguishable from a hang. Disk
-    /// growth is the one signal that is always truthful here.
-    private static func observeBytes(expected: Int64, update: @escaping (Double) -> Void) -> Task<Void, Never> {
-        let base = Paths.directorySize(Paths.modelsRoot)
-        return Task.detached {
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(700))
-                if Task.isCancelled { return }
-                let grown = Paths.directorySize(Paths.modelsRoot) - base
-                guard expected > 0 else { continue }
-                update(min(0.99, max(0, Double(grown) / Double(expected))))
-            }
-        }
-    }
-
     /// The files to fetch, named one by one from the repository's root listing.
     ///
     /// A glob will not do. The client matches with `fnmatch` and no `FNM_PATHNAME`, so `*`
@@ -108,12 +84,15 @@ final class ModelDownloader: ObservableObject {
     /// So the root is listed and its files are named exactly. Nothing recursive is ever
     /// asked for, and a repository that rearranges itself fails loudly here rather than
     /// silently pulling five copies of a model.
-    private static func rootFiles(_ client: HubClient, repo: String) async throws -> [String] {
+    nonisolated private static func rootFiles(
+        _ client: HubClient, repo: String
+    ) async throws -> (files: [String], bytes: Int64) {
         let tree = try await client.modelTree(Repo.ID(stringLiteral: repo))
-        return tree
-            .filter { $0.type == .file && !$0.path.contains("/") }
-            .map(\.path)
-            .filter { path in wanted.contains { path.hasSuffix($0) } }
+        let entries = tree.filter { entry in
+            entry.type == .file && !entry.path.contains("/")
+                && wanted.contains { entry.path.hasSuffix($0) }
+        }
+        return (entries.map(\.path), entries.reduce(0) { $0 + Int64($1.size ?? 0) })
     }
 
     private static func fetch(
@@ -122,21 +101,41 @@ final class ModelDownloader: ObservableObject {
     ) async throws -> URL {
         Paths.ensureDirectory(Paths.modelsRoot)
         let client = HubClient(cache: HubCache(cacheDirectory: Paths.modelsRoot))
-        let files = try await rootFiles(client, repo: spec.repo)
+        let (files, totalBytes) = try await rootFiles(client, repo: spec.repo)
         guard files.contains(where: { $0.hasSuffix(".safetensors") }) else {
             throw DownloadError.noWeightsAtRoot(spec.repo)
         }
         let downloader = #hubDownloader(client)
+        let started = Date()
         return try await downloader.download(
             id: spec.repo, revision: nil, matching: files, useLatest: false
         ) { progress in
-            // Only the detail text is used from here. Measured against a real repo, both
-            // `fractionCompleted` and the unit counts advance in rare jumps - fine for an
-            // 80 MB model, but on a 16 GB one the bar would sit still for tens of minutes
-            // and the app would read as hung. The caller drives the bar from bytes on disk
-            // instead; see `observeBytes`.
-            onProgress(-1, progress.localizedAdditionalDescription ?? "")
+            // The client's own description is unusable here: measured against a real repo
+            // it reads "1 222 of 771 820 896", mixing a unit count against a byte count,
+            // and it barely moves. On a 16 GB model at a few MB/s that is forty minutes of
+            // a number that looks stuck, which is indistinguishable from a hang - Roman
+            // read it as one. `fractionCompleted` does advance smoothly, so the bar comes
+            // from that and the text is written here against the size the listing already
+            // gave us.
+            let fraction = progress.fractionCompleted
+            guard fraction.isFinite else { return }
+            let done = Int64(Double(totalBytes) * fraction)
+            let elapsed = max(Date().timeIntervalSince(started), 1)
+            let rate = Double(done) / elapsed
+            let remaining = rate > 0 ? Double(totalBytes - done) / rate : 0
+            onProgress(
+                fraction,
+                "\(Paths.formatBytes(done)) of \(Paths.formatBytes(totalBytes)) · "
+                    + "\(Paths.formatBytes(Int64(rate)))/s · \(Self.remainingText(remaining)) left")
         }
+    }
+
+    nonisolated private static func remainingText(_ seconds: TimeInterval) -> String {
+        guard seconds.isFinite, seconds > 0 else { return "—" }
+        let minutes = Int(seconds.rounded()) / 60
+        if minutes >= 60 { return "\(minutes / 60) h \(minutes % 60) min" }
+        if minutes >= 1 { return "\(minutes) min" }
+        return "\(Int(seconds.rounded())) s"
     }
 }
 
