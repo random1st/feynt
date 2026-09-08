@@ -11,10 +11,11 @@ OpenAI-совместимый сервер. Движок работает **в �
 ## Установка
 
 ```sh
-brew tap random1st/feynt https://github.com/random1st/feynt
-brew trust random1st/feynt
-brew install --cask feynt
+brew install --cask random1st/feynt/feynt
 ```
+
+Полное имя подключает tap само. Если Homebrew попросит сначала доверять ему —
+`brew trust random1st/feynt`, и повторить.
 
 Приложение подписано Developer ID и нотаризовано Apple, билет вшит — снимать
 карантин и выходить в сеть при первом запуске не нужно. Требуется macOS 14+.
