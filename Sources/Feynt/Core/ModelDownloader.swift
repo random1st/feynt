@@ -133,6 +133,13 @@ final class ModelDownloader: ObservableObject {
             let fraction = Double(done) / Double(totalBytes)
             let elapsed = max(Date().timeIntervalSince(started), 1)
             let rate = Double(done) / elapsed
+            // No rate or estimate until something has actually arrived: dividing the whole
+            // model by the first second gives "446 h left", which reads as a broken
+            // download rather than as an empty average.
+            guard done > 0 else {
+                onProgress(fraction, "starting · \(Paths.formatBytes(totalBytes)) to fetch")
+                return
+            }
             let remaining = rate > 0 ? Double(totalBytes - done) / rate : 0
             onProgress(
                 fraction,

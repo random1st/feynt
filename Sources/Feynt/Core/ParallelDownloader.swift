@@ -34,7 +34,10 @@ actor ParallelDownloader {
         }
     }
 
-    private static let chunkBytes = 32 << 20
+    /// Куски по 8 МБ, а не по 32: счётчик докладывает по завершённому куску, и на
+    /// медленном канале тридцать два мегабайта — это минуты неподвижного «0 MB», которые
+    /// невозможно отличить от зависшей загрузки.
+    private static let chunkBytes = 8 << 20
     private static let inFlight = 8
 
     private let session: URLSession

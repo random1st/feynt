@@ -57,6 +57,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             AppLog.write("uncaught exception: \(exception.name.rawValue) — \(exception.reason ?? "")")
         }
 
+        // `Feynt --download <model-id>` runs the wizard's download inside the real bundle -
+        // same code, same signature, same entitlements, same network stack - and prints what
+        // happens. Added because a download that fails only on someone else's machine cannot
+        // be diagnosed from a test binary that shares none of those things.
+        if let index = CommandLine.arguments.firstIndex(of: "--download") {
+            let id = CommandLine.arguments.count > index + 1 ? CommandLine.arguments[index + 1] : ""
+            runDownloadSelfTest(modelID: id)
+            return
+        }
+
         guard !AppState.shared.settings.wizardCompleted else { return }
         // A menu-bar-only app cannot show a window or take focus until it is briefly a
         // regular app; it drops back to accessory once setup finishes, so the Dock icon
@@ -82,5 +92,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    /// The diagnostic behind `--download`: resolve the catalog entry, fetch whatever is
+    /// missing, print each step, and exit with a status a script can read.
+    @MainActor private func runDownloadSelfTest(modelID: String) {
+        guard let spec = ModelCatalog.model(id: modelID) else {
+            print("no such model: \(modelID)")
+            print("available: \(ModelCatalog.all.map(\.id).joined(separator: ", "))")
+            exit(2)
+        }
+        let state = AppState.shared
+        let missing = state.missingArtifacts(for: spec)
+        print("model: \(spec.repo)")
+        print("missing: \(missing.map(\.repo).joined(separator: ", "))")
+        guard !missing.isEmpty else {
+            print("already installed at \(ModelResolver.installedLocation(for: spec)?.path ?? "?")")
+            exit(0)
+        }
+        state.downloader.download(missing) { success in
+            print(success ? "download finished" : "download failed: \(state.downloader.errorMessage ?? "no reason given")")
+            exit(success ? 0 : 1)
+        }
+        // The downloader reports on the main actor, so the run loop has to keep turning.
+        Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
+            let downloader = AppState.shared.downloader
+            guard downloader.isDownloading else { return }
+            print("  \(downloader.detail)")
+        }
     }
 }
