@@ -86,13 +86,14 @@ final class ModelDownloader: ObservableObject {
     /// silently pulling five copies of a model.
     nonisolated private static func rootFiles(
         _ client: HubClient, repo: String
-    ) async throws -> (files: [String], bytes: Int64) {
+    ) async throws -> (files: [RemoteFile], bytes: Int64) {
         let tree = try await client.modelTree(Repo.ID(stringLiteral: repo))
         let entries = tree.filter { entry in
             entry.type == .file && !entry.path.contains("/")
                 && wanted.contains { entry.path.hasSuffix($0) }
         }
-        return (entries.map(\.path), entries.reduce(0) { $0 + Int64($1.size ?? 0) })
+        let files = entries.map { RemoteFile(path: $0.path, bytes: Int64($0.size ?? 0)) }
+        return (files, files.reduce(0) { $0 + $1.bytes })
     }
 
     private static func fetch(
@@ -102,32 +103,29 @@ final class ModelDownloader: ObservableObject {
         Paths.ensureDirectory(Paths.modelsRoot)
         let client = HubClient(cache: HubCache(cacheDirectory: Paths.modelsRoot))
         let (files, totalBytes) = try await rootFiles(client, repo: spec.repo)
-        guard files.contains(where: { $0.hasSuffix(".safetensors") }) else {
+        guard files.contains(where: { $0.path.hasSuffix(".safetensors") }) else {
             throw DownloadError.noWeightsAtRoot(spec.repo)
         }
-        let downloader = #hubDownloader(client)
+
+        // The flat layout the resolver already looks in, rather than the client's
+        // content-addressed cache: one directory named after the repository, which is what
+        // every other model on disk here looks like.
+        let destination = Paths.modelsRoot.appending(
+            path: spec.directoryName, directoryHint: .isDirectory)
         let started = Date()
-        return try await downloader.download(
-            id: spec.repo, revision: nil, matching: files, useLatest: false
-        ) { progress in
-            // The client's own description is unusable here: measured against a real repo
-            // it reads "1 222 of 771 820 896", mixing a unit count against a byte count,
-            // and it barely moves. On a 16 GB model at a few MB/s that is forty minutes of
-            // a number that looks stuck, which is indistinguishable from a hang - Roman
-            // read it as one. `fractionCompleted` does advance smoothly, so the bar comes
-            // from that and the text is written here against the size the listing already
-            // gave us.
-            let fraction = progress.fractionCompleted
-            guard fraction.isFinite else { return }
-            let done = Int64(Double(totalBytes) * fraction)
+        try await ParallelDownloader().download(
+            repo: spec.repo, files: files, into: destination
+        ) { done in
+            let fraction = totalBytes > 0 ? Double(done) / Double(totalBytes) : 0
             let elapsed = max(Date().timeIntervalSince(started), 1)
             let rate = Double(done) / elapsed
             let remaining = rate > 0 ? Double(totalBytes - done) / rate : 0
             onProgress(
                 fraction,
                 "\(Paths.formatBytes(done)) of \(Paths.formatBytes(totalBytes)) · "
-                    + "\(Paths.formatBytes(Int64(rate)))/s · \(Self.remainingText(remaining)) left")
+                    + "\(Paths.formatBytes(Int64(rate)))/s · \(remainingText(remaining)) left")
         }
+        return destination
     }
 
     nonisolated private static func remainingText(_ seconds: TimeInterval) -> String {
