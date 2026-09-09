@@ -196,7 +196,18 @@ actor ParallelDownloader {
         while true {
             do {
                 let (data, response) = try await session.data(for: request)
-                return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
+                let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+                // Every model this app offers is public, so an unauthenticated fetch is the
+                // path that must always work. A token found on the machine is an attempt,
+                // not a requirement: a stale one left by an old `hf login` would otherwise
+                // turn a file that downloads fine for a stranger into a 401.
+                if (code == 401 || code == 403),
+                    request.value(forHTTPHeaderField: "Authorization") != nil
+                {
+                    request.setValue(nil, forHTTPHeaderField: "Authorization")
+                    continue
+                }
+                return (data, code)
             } catch {
                 attempt += 1
                 if attempt >= 3 { throw error }

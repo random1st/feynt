@@ -49,7 +49,15 @@ struct ChatView: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
 
-            if engine.state != .unloaded {
+            if engine.state == .unloaded {
+                Button {
+                    Task { await engine.load(state.settings.selectedModel) }
+                } label: {
+                    Label("Load", systemImage: "play")
+                }
+                .disabled(engine.state.isBusy || state.downloader.isDownloading)
+                .help("Load the weights now instead of on the first message")
+            } else {
                 Button {
                     Task { await engine.unload() }
                 } label: {
@@ -57,6 +65,17 @@ struct ChatView: View {
                 }
                 .disabled(chat.isStreaming || engine.state.isBusy)
                 .help("Free the weights from memory")
+
+                // A model can be left in a state a message will not fix - a failed load, a
+                // drafter swapped on disk. Unload-then-load is the cure, and asking for it
+                // twice by hand is not an interface.
+                Button {
+                    Task { await engine.switchTo(state.settings.selectedModel) }
+                } label: {
+                    Label("Reload", systemImage: "arrow.clockwise")
+                }
+                .disabled(chat.isStreaming || engine.state.isBusy)
+                .help("Unload and load the same model again")
             }
 
             Spacer()
