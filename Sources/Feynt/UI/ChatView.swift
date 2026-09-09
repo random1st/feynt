@@ -41,11 +41,10 @@ struct ChatView: View {
 
                 Divider()
 
-                Button("Re-download \(state.settings.selectedModel.title)…") {
-                    state.redownload(state.settings.selectedModel)
-                }
-                .disabled(engine.state.isBusy || state.downloader.isDownloading)
-
+                // Re-downloading lives in the model window, next to what is on disk and how
+                // much of it. In a chat the menu should switch between loaded models and
+                // nothing else - deleting sixteen gigabytes does not belong one slip away
+                // from picking a model mid-conversation.
                 Button("Manage models…") {
                     NSApp.activate(ignoringOtherApps: true)
                     openWindow(id: MainWindowID.value)
