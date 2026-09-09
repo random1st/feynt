@@ -38,8 +38,13 @@ actor ParallelDownloader {
     private static let inFlight = 8
 
     private let session: URLSession
+    /// Where files are fetched from. Injectable so the two response shapes this downloader
+    /// has to survive - a server that slices, and one that ignores `Range` - can both be
+    /// exercised against a real socket instead of reasoned about.
+    private let base: URL
 
-    init() {
+    init(base: URL = URL(string: "https://huggingface.co")!) {
+        self.base = base
         let configuration = URLSessionConfiguration.ephemeral
         // The default cap is six per host, which would silently bound the parallelism this
         // whole type exists for.
@@ -90,7 +95,7 @@ actor ParallelDownloader {
             at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         manager.createFile(atPath: destination.path, contents: nil)
 
-        let url = Self.url(repo: repo, path: file.path)
+        let url = url(repo: repo, path: file.path)
 
         // A listing that did not carry sizes must not turn into a download of nothing.
         // Splitting a file into chunks needs its length, and without one the ranges come
@@ -105,51 +110,70 @@ actor ParallelDownloader {
         let ranges = Self.ranges(of: Int(file.bytes))
         let progress = ByteCounter(onBytes)
 
+        // The first chunk is also the probe. Hugging Face answers a file request with a 307
+        // to its CDN, so every ranged request only works if `Range` survives that redirect -
+        // it does here, and a proxy or a VPN on the way can drop it. When that happens the
+        // server sends 200 with the whole file instead of 206 with a slice, and a downloader
+        // that insists on 206 fails on the second chunk and writes nothing at all. So: ask
+        // for the first slice, look at what came back, and only fan out if slicing worked.
+        let (head, headCode) = try await request(url: url, range: ranges[0], path: file.path)
+        guard headCode == 206 else {
+            guard headCode == 200 else { throw Failure.badStatus(file.path, headCode) }
+            // Ranges were ignored; this is the entire file.
+            try head.write(to: destination)
+            onBytes(Int64(head.count))
+            return
+        }
+        try Self.write(head, to: destination, at: ranges[0].lowerBound)
+        await progress.add(Int64(head.count))
+
         try await withThrowingTaskGroup(of: Void.self) { group in
             var started = 0
-            for range in ranges {
+            for range in ranges.dropFirst() {
                 if started >= Self.inFlight {
                     try await group.next()
                     started -= 1
                 }
-                group.addTask { [session] in
-                    var request = URLRequest(url: url)
-                    request.setValue(
-                        "bytes=\(range.lowerBound)-\(range.upperBound - 1)",
-                        forHTTPHeaderField: "Range")
-                    // A dropped connection an hour into a download should cost that chunk,
-                    // not the model. Three tries, backing off, then the error stands.
-                    var attempt = 0
-                    let (data, code): (Data, Int) = try await {
-                        while true {
-                            do {
-                                let (data, response) = try await session.data(for: request)
-                                return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
-                            } catch {
-                                attempt += 1
-                                if attempt >= 3 { throw error }
-                                try await Task.sleep(for: .seconds(attempt))
-                            }
-                        }
-                    }()
-                    // 206 for a range, 200 when a server ignores the header and sends the
-                    // whole file - which is still correct if this is the only chunk.
-                    guard code == 206 || (code == 200 && range.lowerBound == 0) else {
-                        throw Failure.badStatus(file.path, code)
-                    }
-                    guard data.count == range.count || code == 200 else {
+                group.addTask {
+                    let (data, code) = try await self.request(
+                        url: url, range: range, path: file.path)
+                    guard code == 206 else { throw Failure.badStatus(file.path, code) }
+                    guard data.count == range.count else {
                         throw Failure.shortRead(file.path, expected: range.count, got: data.count)
                     }
-                    let handle = try FileHandle(forWritingTo: destination)
-                    defer { try? handle.close() }
-                    try handle.seek(toOffset: UInt64(range.lowerBound))
-                    try handle.write(contentsOf: data)
+                    try Self.write(data, to: destination, at: range.lowerBound)
                     await progress.add(Int64(data.count))
                 }
                 started += 1
             }
             try await group.waitForAll()
         }
+    }
+
+    /// One ranged request, retried on a dropped connection: an hour into a download that
+    /// should cost the chunk, not the model.
+    private func request(url: URL, range: Range<Int>, path: String) async throws -> (Data, Int) {
+        var request = URLRequest(url: url)
+        request.setValue(
+            "bytes=\(range.lowerBound)-\(range.upperBound - 1)", forHTTPHeaderField: "Range")
+        var attempt = 0
+        while true {
+            do {
+                let (data, response) = try await session.data(for: request)
+                return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
+            } catch {
+                attempt += 1
+                if attempt >= 3 { throw error }
+                try await Task.sleep(for: .seconds(attempt))
+            }
+        }
+    }
+
+    private static func write(_ data: Data, to destination: URL, at offset: Int) throws {
+        let handle = try FileHandle(forWritingTo: destination)
+        defer { try? handle.close() }
+        try handle.seek(toOffset: UInt64(offset))
+        try handle.write(contentsOf: data)
     }
 
     /// One unranged GET, for a file whose length the listing did not report.
@@ -164,10 +188,10 @@ actor ParallelDownloader {
         onBytes(Int64(data.count))
     }
 
-    private static func url(repo: String, path: String) -> URL {
+    private func url(repo: String, path: String) -> URL {
         let encoded =
             path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
-        return URL(string: "https://huggingface.co/\(repo)/resolve/main/\(encoded)")!
+        return base.appending(path: "\(repo)/resolve/main/\(encoded)")
     }
 
     private static func ranges(of total: Int) -> [Range<Int>] {
