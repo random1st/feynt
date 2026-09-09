@@ -129,6 +129,14 @@ enum ModelResolver {
         UserDefaults.standard.set(map, forKey: recordKey)
     }
 
+    /// Forgets where a repository was downloaded to. Needed when its files are deleted:
+    /// a remembered path outlives them and would answer for a directory that is gone.
+    static func forgetLocation(for repo: String) {
+        var map = UserDefaults.standard.dictionary(forKey: recordKey) as? [String: String] ?? [:]
+        map[repo] = nil
+        UserDefaults.standard.set(map, forKey: recordKey)
+    }
+
     static func recordedLocation(for repo: String) -> URL? {
         guard let map = UserDefaults.standard.dictionary(forKey: recordKey) as? [String: String],
               let path = map[repo]

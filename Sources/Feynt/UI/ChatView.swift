@@ -4,6 +4,7 @@ struct ChatView: View {
     @EnvironmentObject private var state: AppState
     @ObservedObject var chat: ChatStore
     @ObservedObject var engine: EngineController
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(spacing: 0) {
@@ -22,23 +23,32 @@ struct ChatView: View {
     private var modelBar: some View {
         HStack(spacing: 10) {
             Menu {
-                ForEach(ModelCatalog.all) { spec in
-                    let title =
-                        ModelResolver.isPresent(spec)
-                        ? spec.title
-                        : "\(spec.title) — \(Paths.formatBytes(spec.approximateBytes)) to download"
+                // Только скачанные: в окне, где идёт разговор, выбор модели должен
+                // переключать, а не начинать часовую загрузку. Всё остальное — в окне
+                // моделей, где для этого есть место и прогресс.
+                ForEach(ModelCatalog.all.filter(ModelResolver.isPresent)) { spec in
                     Button {
                         state.switchModel(to: spec)
                     } label: {
-                        // A checkmark only on the selected row; an empty `systemImage`
-                        // renders as a gap on every other one.
                         if spec.id == state.settings.selectedModelID {
-                            Label(title, systemImage: "checkmark")
+                            Label(spec.title, systemImage: "checkmark")
                         } else {
-                            Text(title)
+                            Text(spec.title)
                         }
                     }
                     .disabled(engine.state.isBusy || state.downloader.isDownloading)
+                }
+
+                Divider()
+
+                Button("Re-download \(state.settings.selectedModel.title)…") {
+                    state.redownload(state.settings.selectedModel)
+                }
+                .disabled(engine.state.isBusy || state.downloader.isDownloading)
+
+                Button("Manage models…") {
+                    NSApp.activate(ignoringOtherApps: true)
+                    openWindow(id: MainWindowID.value)
                 }
             } label: {
                 HStack(spacing: 6) {

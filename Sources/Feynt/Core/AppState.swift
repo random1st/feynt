@@ -56,6 +56,39 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Deletes a model and its drafter, then fetches them again.
+    ///
+    /// For weights that arrived broken - a download killed mid-flight before the files were
+    /// written atomically, a shard corrupted on disk. Everything else in the app treats an
+    /// existing directory as an installed model, on purpose; this is the one place that
+    /// says otherwise, so it asks first: the pair is sixteen gigabytes and the way back is
+    /// another download.
+    func redownload(_ spec: ModelSpec) {
+        let alert = NSAlert()
+        alert.messageText = "Re-download \(spec.title)?"
+        alert.informativeText =
+            "The weights and the drafter are deleted and fetched again — about "
+            + "\(Paths.formatBytes(spec.approximateBytes + spec.drafterApproximateBytes))."
+        alert.addButton(withTitle: "Re-download")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        Task {
+            await engine.unload()
+            for artifact in [spec, spec.drafter] {
+                if let location = ModelResolver.installedLocation(for: artifact) {
+                    try? FileManager.default.removeItem(at: location)
+                }
+                let inRoot = Paths.modelsRoot.appending(
+                    path: artifact.directoryName, directoryHint: .isDirectory)
+                try? FileManager.default.removeItem(at: inRoot)
+                ModelResolver.forgetLocation(for: artifact.repo)
+                AppLog.write("re-downloading \(artifact.repo): removed local copy")
+            }
+            switchModel(to: spec)
+        }
+    }
+
     func finishWizard(with spec: ModelSpec) {
         settings.selectedModelID = spec.id
         settings.wizardCompleted = true

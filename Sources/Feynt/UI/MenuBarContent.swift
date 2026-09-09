@@ -15,6 +15,7 @@ struct MenuBarContent: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var api: APIServer
     @Environment(\.openWindow) private var openWindow
+    @EnvironmentObject private var state: AppState
 
     var body: some View {
         Text("\(settings.selectedModel.title) — \(engine.statusText)")
@@ -48,6 +49,11 @@ struct MenuBarContent: View {
             }
             .disabled(engine.state == .generating)
         }
+
+        Button("Re-download model…") {
+            state.redownload(settings.selectedModel)
+        }
+        .disabled(engine.state.isBusy)
 
         Button("Open chat") {
             NSApp.activate(ignoringOtherApps: true)
