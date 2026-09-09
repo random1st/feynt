@@ -45,18 +45,19 @@ enum Paths {
         return total
     }
 
+    /// Bytes, in English, with a decimal point.
+    ///
+    /// `ByteCountFormatter` takes both the unit names and the decimal separator from the
+    /// system locale, so on this machine it produced "771,8 МБ" inside an English interface,
+    /// and patching the unit strings afterwards left the comma. It also refused to go below
+    /// megabytes, which turned the first kilobytes of a download into "0 MB" - a progress
+    /// line that says a working download is doing nothing.
     static func formatBytes(_ bytes: Int64) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        formatter.allowedUnits = [.useGB, .useMB]
-        // The formatter localises its units from the system, which put Russian "ГБ" next to
-        // an otherwise English interface. The UI is English, so the units are too.
-        formatter.formattingContext = .standalone
-        let text = formatter.string(fromByteCount: bytes)
-        return text.replacingOccurrences(of: "ГБ", with: "GB")
-            .replacingOccurrences(of: "МБ", with: "MB")
-            .replacingOccurrences(of: "КБ", with: "KB")
-            .replacingOccurrences(of: "байт", with: "bytes")
+        let value = Double(bytes)
+        if bytes >= 1_000_000_000 { return String(format: "%.2f GB", value / 1e9) }
+        if bytes >= 1_000_000 { return String(format: "%.1f MB", value / 1e6) }
+        if bytes >= 1_000 { return String(format: "%.0f KB", value / 1e3) }
+        return "\(bytes) bytes"
     }
 }
 

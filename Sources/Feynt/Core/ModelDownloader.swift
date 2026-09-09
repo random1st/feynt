@@ -86,10 +86,20 @@ final class ModelDownloader: ObservableObject {
     /// So the root is listed and its files are named exactly. Nothing recursive is ever
     /// asked for, and a repository that rearranges itself fails loudly here rather than
     /// silently pulling five copies of a model.
+    /// The commit the listing describes, so the files are fetched from the same version of
+    /// the repository that was measured. `main` moves; a model updated between the listing
+    /// and the last shard would otherwise be assembled out of two of them.
+    nonisolated private static func revision(_ client: HubClient, repo: String) async -> String {
+        guard let info = try? await client.getModel(Repo.ID(stringLiteral: repo)),
+            let sha = info.sha, !sha.isEmpty
+        else { return "main" }
+        return sha
+    }
+
     nonisolated private static func rootFiles(
-        _ client: HubClient, repo: String
+        _ client: HubClient, repo: String, revision: String
     ) async throws -> (files: [RemoteFile], bytes: Int64) {
-        let tree = try await client.modelTree(Repo.ID(stringLiteral: repo))
+        let tree = try await client.modelTree(Repo.ID(stringLiteral: repo), revision: revision)
         let entries = tree.filter { entry in
             entry.type == .file && !entry.path.contains("/")
                 && wanted.contains { entry.path.hasSuffix($0) }
@@ -104,7 +114,9 @@ final class ModelDownloader: ObservableObject {
     ) async throws -> URL {
         Paths.ensureDirectory(Paths.modelsRoot)
         let client = HubClient(cache: HubCache(cacheDirectory: Paths.modelsRoot))
-        let (files, totalBytes) = try await rootFiles(client, repo: spec.repo)
+        let revision = await Self.revision(client, repo: spec.repo)
+        let (files, totalBytes) = try await rootFiles(
+            client, repo: spec.repo, revision: revision)
         guard files.contains(where: { $0.path.hasSuffix(".safetensors") }) else {
             throw DownloadError.noWeightsAtRoot(spec.repo)
         }
@@ -118,11 +130,12 @@ final class ModelDownloader: ObservableObject {
         // someone else's machine, this line is the difference between a diagnosis and a
         // guess: it says whether the repository was even described.
         AppLog.write(
-            "downloading \(spec.repo): \(files.count) files, "
+            "downloading \(spec.repo)@\(revision.prefix(8)) from "
+                + "\(ParallelDownloader.configuredEndpoint.host ?? "?"): \(files.count) files, "
                 + "\(Paths.formatBytes(totalBytes)) -> \(destination.path)")
         let started = Date()
         try await ParallelDownloader().download(
-            repo: spec.repo, files: files, into: destination
+            repo: spec.repo, revision: revision, files: files, into: destination
         ) { done in
             // With no total to divide by, the bar cannot move - but the byte count can, and
             // a moving number is the difference between "downloading" and "dead".
@@ -136,7 +149,9 @@ final class ModelDownloader: ObservableObject {
             // No rate or estimate until something has actually arrived: dividing the whole
             // model by the first second gives "446 h left", which reads as a broken
             // download rather than as an empty average.
-            guard done > 0 else {
+            // A rate computed from the first kilobytes is not a rate: it produced
+            // "175 h left" on a download that finished in twenty seconds.
+            guard done > 4_000_000 || elapsed > 5 else {
                 onProgress(fraction, "starting · \(Paths.formatBytes(totalBytes)) to fetch")
                 return
             }

@@ -45,9 +45,41 @@ actor ParallelDownloader {
     /// has to survive - a server that slices, and one that ignores `Range` - can both be
     /// exercised against a real socket instead of reasoned about.
     private let base: URL
+    /// Sent only to `base`, and only when the environment or the Hub's own token file has
+    /// one. Public repositories need none; a private or gated one needs it, and every other
+    /// Hub client reads it from the same two places.
+    private let token: String?
 
-    init(base: URL = URL(string: "https://huggingface.co")!) {
-        self.base = base
+    /// The endpoint every Hugging Face client honours. A mirror, a corporate proxy or an
+    /// enterprise deployment is configured through it, and hard-coding huggingface.co means
+    /// the app is the one thing on such a machine that cannot reach the Hub.
+    static var configuredEndpoint: URL {
+        if let raw = ProcessInfo.processInfo.environment["HF_ENDPOINT"],
+            let url = URL(string: raw.trimmingCharacters(in: .whitespaces)), url.host != nil
+        {
+            return url
+        }
+        return URL(string: "https://huggingface.co")!
+    }
+
+    static var storedToken: String? {
+        let environment = ProcessInfo.processInfo.environment
+        for key in ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] {
+            if let value = environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !value.isEmpty
+            {
+                return value
+            }
+        }
+        let file = Paths.home.appending(path: ".cache/huggingface/token")
+        guard let contents = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+        let trimmed = contents.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    init(base: URL? = nil, token: String? = nil) {
+        self.base = base ?? Self.configuredEndpoint
+        self.token = token ?? Self.storedToken
         let configuration = URLSessionConfiguration.ephemeral
         // The default cap is six per host, which would silently bound the parallelism this
         // whole type exists for.
@@ -62,7 +94,7 @@ actor ParallelDownloader {
     /// Files already present at their full size are counted and skipped, so an interrupted
     /// download resumes at file granularity.
     func download(
-        repo: String, files: [RemoteFile], into directory: URL,
+        repo: String, revision: String = "main", files: [RemoteFile], into directory: URL,
         onBytes: @Sendable @escaping (Int64) -> Void
     ) async throws {
         let manager = FileManager.default
@@ -81,7 +113,7 @@ actor ParallelDownloader {
                 continue
             }
             let before = done
-            try await fetch(repo: repo, file: file, to: destination) { written in
+            try await fetch(repo: repo, revision: revision, file: file, to: destination) { written in
                 onBytes(before + written)
             }
             done += file.bytes
@@ -90,7 +122,7 @@ actor ParallelDownloader {
     }
 
     private func fetch(
-        repo: String, file: RemoteFile, to destination: URL,
+        repo: String, revision: String, file: RemoteFile, to destination: URL,
         onBytes: @Sendable @escaping (Int64) -> Void
     ) async throws {
         let manager = FileManager.default
@@ -98,7 +130,7 @@ actor ParallelDownloader {
             at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         manager.createFile(atPath: destination.path, contents: nil)
 
-        let url = url(repo: repo, path: file.path)
+        let url = url(repo: repo, revision: revision, path: file.path)
 
         // A listing that did not carry sizes must not turn into a download of nothing.
         // Splitting a file into chunks needs its length, and without one the ranges come
@@ -159,6 +191,7 @@ actor ParallelDownloader {
         var request = URLRequest(url: url)
         request.setValue(
             "bytes=\(range.lowerBound)-\(range.upperBound - 1)", forHTTPHeaderField: "Range")
+        authorize(&request)
         var attempt = 0
         while true {
             do {
@@ -184,17 +217,28 @@ actor ParallelDownloader {
         url: URL, path: String, to destination: URL,
         onBytes: @Sendable @escaping (Int64) -> Void
     ) async throws {
-        let (data, response) = try await session.data(from: url)
+        var request = URLRequest(url: url)
+        authorize(&request)
+        let (data, response) = try await session.data(for: request)
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard code == 200 else { throw Failure.badStatus(path, code) }
         try data.write(to: destination)
         onBytes(Int64(data.count))
     }
 
-    private func url(repo: String, path: String) -> URL {
+    /// The token rides only to the configured endpoint. A redirect to the CDN is a
+    /// different host, and URLSession drops the header there, which is what should happen.
+    private func authorize(_ request: inout URLRequest) {
+        guard let token, request.url?.host == base.host else { return }
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    }
+
+    /// - Parameter revision: the commit the listing came from, so a repository updated
+    ///   mid-download cannot deliver shards from two different versions of the weights.
+    private func url(repo: String, revision: String, path: String) -> URL {
         let encoded =
             path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
-        return base.appending(path: "\(repo)/resolve/main/\(encoded)")
+        return base.appending(path: "\(repo)/resolve/\(revision)/\(encoded)")
     }
 
     private static func ranges(of total: Int) -> [Range<Int>] {
