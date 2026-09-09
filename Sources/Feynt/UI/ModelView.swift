@@ -84,18 +84,8 @@ struct ModelView: View {
         .background(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.25)))
     }
 
-    /// Switching stops the current model first, downloads if needed, then loads the other one.
     private func switchTo(_ spec: ModelSpec) {
-        let missing = state.missingArtifacts(for: spec)
-        settings.selectedModelID = spec.id
-        if missing.isEmpty {
-            Task { await engine.switchTo(spec) }
-        } else {
-            downloader.download(missing) { success in
-                guard success else { return }
-                Task { await engine.switchTo(spec) }
-            }
-        }
+        state.switchModel(to: spec)
     }
 
     private func measure() async {

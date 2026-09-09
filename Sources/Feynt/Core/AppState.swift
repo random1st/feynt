@@ -40,6 +40,22 @@ final class AppState: ObservableObject {
         [spec, spec.drafter].filter { !ModelResolver.isPresent($0) }
     }
 
+    /// Switching stops the current model first, downloads what is missing, then loads the
+    /// other one. Lives here because two surfaces offer it - the chat header and the model
+    /// window - and a second copy would be a second set of rules about what "switch" means.
+    func switchModel(to spec: ModelSpec) {
+        let missing = missingArtifacts(for: spec)
+        settings.selectedModelID = spec.id
+        guard !missing.isEmpty else {
+            Task { await engine.switchTo(spec) }
+            return
+        }
+        downloader.download(missing) { success in
+            guard success else { return }
+            Task { await self.engine.switchTo(spec) }
+        }
+    }
+
     func finishWizard(with spec: ModelSpec) {
         settings.selectedModelID = spec.id
         settings.wizardCompleted = true

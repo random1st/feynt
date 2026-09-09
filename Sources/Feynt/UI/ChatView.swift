@@ -7,10 +7,63 @@ struct ChatView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            modelBar
+            Divider()
             transcript
             Divider()
             composer
         }
+    }
+
+    /// Which model is loaded, how to put another one in its place, and how to get it out of
+    /// memory - at the top of the window where it is being used, not three clicks away in a
+    /// settings pane. Ejecting matters here: the weights are sixteen to nineteen gigabytes,
+    /// and waiting out the idle timer to get them back is not a thing anyone wants to do.
+    private var modelBar: some View {
+        HStack(spacing: 10) {
+            Menu {
+                ForEach(ModelCatalog.all) { spec in
+                    let title =
+                        ModelResolver.isPresent(spec)
+                        ? spec.title
+                        : "\(spec.title) — \(Paths.formatBytes(spec.approximateBytes)) to download"
+                    Button {
+                        state.switchModel(to: spec)
+                    } label: {
+                        // A checkmark only on the selected row; an empty `systemImage`
+                        // renders as a gap on every other one.
+                        if spec.id == state.settings.selectedModelID {
+                            Label(title, systemImage: "checkmark")
+                        } else {
+                            Text(title)
+                        }
+                    }
+                    .disabled(engine.state.isBusy || state.downloader.isDownloading)
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "cpu")
+                    Text(state.settings.selectedModel.title).lineLimit(1)
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+
+            if engine.state != .unloaded {
+                Button {
+                    Task { await engine.unload() }
+                } label: {
+                    Label("Unload", systemImage: "eject")
+                }
+                .disabled(chat.isStreaming || engine.state.isBusy)
+                .help("Free the weights from memory")
+            }
+
+            Spacer()
+            Text(engine.statusText).font(.callout).foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     private var transcript: some View {
@@ -43,7 +96,6 @@ struct ChatView: View {
                 // The chat is the demo surface: whether speculation is on, and what it buys,
                 // belongs here rather than only behind a menu-bar click.
                 SpeedReadout(engine: engine)
-                Text(engine.statusText).font(.callout).foregroundStyle(.secondary)
                 Button("Clear", action: chat.clear).disabled(chat.messages.isEmpty)
             }
             HStack(alignment: .bottom, spacing: 8) {
