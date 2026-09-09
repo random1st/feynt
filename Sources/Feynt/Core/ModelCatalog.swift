@@ -79,12 +79,21 @@ enum ModelCatalog {
 /// Finds a repo on disk before deciding anything needs downloading.
 enum ModelResolver {
     /// A directory counts as an installed model when it has a config and at least one
-    /// weight shard — a half-finished download must never pass this test.
+    /// weight shard with bytes in it.
+    ///
+    /// The size test is the whole point. A download that died left `model.safetensors` at
+    /// zero length, this returned true, and the app decided the model was installed - so it
+    /// never offered to fetch it again. Roman's machine sat at 14 KB on disk, which is the
+    /// JSON files and an empty shard, with no way to retry.
     static func isInstalled(_ directory: URL) -> Bool {
         let fm = FileManager.default
         guard fm.fileExists(atPath: directory.appending(path: "config.json").path) else { return false }
         guard let entries = try? fm.contentsOfDirectory(atPath: directory.path) else { return false }
-        return entries.contains { $0.hasSuffix(".safetensors") }
+        return entries.contains { name in
+            guard name.hasSuffix(".safetensors") else { return false }
+            let size = (try? fm.attributesOfItem(atPath: directory.appending(path: name).path)[.size]) as? Int64
+            return (size ?? 0) > 0
+        }
     }
 
     /// Candidate locations, most specific first. `recordedLocation` is where a previous

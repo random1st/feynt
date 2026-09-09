@@ -116,8 +116,14 @@ struct WizardView: View {
                 if let error = downloader.errorMessage {
                     Label(error, systemImage: "xmark.octagon").foregroundStyle(.red)
                 }
-                Button("Cancel") { downloader.cancel() }
-                    .disabled(!downloader.isDownloading)
+                HStack {
+                    Button("Cancel") { downloader.cancel() }
+                        .disabled(!downloader.isDownloading)
+                    // A failed download used to end here: an error, a dead bar, and no way
+                    // forward but quitting the app.
+                    Button("Try again") { startStepThree() }
+                        .disabled(downloader.isDownloading)
+                }
             }
         }
     }

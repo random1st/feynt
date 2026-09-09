@@ -78,6 +78,18 @@ struct ChatView: View {
                 .help("Unload and load the same model again")
             }
 
+            if state.downloader.isDownloading {
+                Text(state.downloader.detail).font(.callout).foregroundStyle(.secondary)
+                    .lineLimit(1)
+            } else if state.downloader.errorMessage != nil {
+                Button {
+                    state.switchModel(to: state.settings.selectedModel)
+                } label: {
+                    Label("Retry download", systemImage: "arrow.clockwise.circle")
+                }
+                .help(state.downloader.errorMessage ?? "")
+            }
+
             Spacer()
             Text(engine.statusText).font(.callout).foregroundStyle(.secondary)
         }

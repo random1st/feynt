@@ -113,9 +113,17 @@ actor ParallelDownloader {
                 continue
             }
             let before = done
-            try await fetch(repo: repo, revision: revision, file: file, to: destination) { written in
+            // Downloaded beside the real name and moved into place only when whole. A file
+            // built up in place leaves a truncated - or empty - `.safetensors` behind when
+            // the network drops, and that is indistinguishable from a finished download to
+            // anything that just looks for the name.
+            let partial = destination.appendingPathExtension("part")
+            try? manager.removeItem(at: partial)
+            try await fetch(repo: repo, revision: revision, file: file, to: partial) { written in
                 onBytes(before + written)
             }
+            try? manager.removeItem(at: destination)
+            try manager.moveItem(at: partial, to: destination)
             done += file.bytes
             onBytes(done)
         }
