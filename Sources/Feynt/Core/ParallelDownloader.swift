@@ -64,7 +64,8 @@ actor ParallelDownloader {
         for file in files {
             try Task.checkCancellation()
             let destination = directory.appending(path: file.path)
-            if let size = try? manager.attributesOfItem(atPath: destination.path)[.size] as? Int64,
+            if file.bytes > 0,
+                let size = try? manager.attributesOfItem(atPath: destination.path)[.size] as? Int64,
                 size == file.bytes
             {
                 done += file.bytes
@@ -90,6 +91,17 @@ actor ParallelDownloader {
         manager.createFile(atPath: destination.path, contents: nil)
 
         let url = Self.url(repo: repo, path: file.path)
+
+        // A listing that did not carry sizes must not turn into a download of nothing.
+        // Splitting a file into chunks needs its length, and without one the ranges come
+        // out empty - a request for `bytes=0--1`, a rejected response, and zero bytes on
+        // disk. So an unknown size is fetched whole, in one request, which is slower and
+        // correct; the fast path stays for everything the listing did describe.
+        guard file.bytes > 0 else {
+            try await fetchWhole(url: url, path: file.path, to: destination, onBytes: onBytes)
+            return
+        }
+
         let ranges = Self.ranges(of: Int(file.bytes))
         let progress = ByteCounter(onBytes)
 
@@ -138,6 +150,18 @@ actor ParallelDownloader {
             }
             try await group.waitForAll()
         }
+    }
+
+    /// One unranged GET, for a file whose length the listing did not report.
+    private func fetchWhole(
+        url: URL, path: String, to destination: URL,
+        onBytes: @Sendable @escaping (Int64) -> Void
+    ) async throws {
+        let (data, response) = try await session.data(from: url)
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard code == 200 else { throw Failure.badStatus(path, code) }
+        try data.write(to: destination)
+        onBytes(Int64(data.count))
     }
 
     private static func url(repo: String, path: String) -> URL {

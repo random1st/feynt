@@ -48,7 +48,9 @@ final class ModelDownloader: ObservableObject {
                         }
                     }
                     ModelResolver.recordLocation(url, for: spec.repo)
-                    AppLog.write("downloaded \(spec.repo) -> \(url.path)")
+                    AppLog.write(
+                        "downloaded \(spec.repo) -> \(url.path), "
+                            + "\(Paths.formatBytes(Paths.directorySize(url))) on disk")
                 } catch is CancellationError {
                     success = false
                     break
@@ -112,11 +114,23 @@ final class ModelDownloader: ObservableObject {
         // every other model on disk here looks like.
         let destination = Paths.modelsRoot.appending(
             path: spec.directoryName, directoryHint: .isDirectory)
+        // What the listing said, before a byte moves. When a download comes back empty on
+        // someone else's machine, this line is the difference between a diagnosis and a
+        // guess: it says whether the repository was even described.
+        AppLog.write(
+            "downloading \(spec.repo): \(files.count) files, "
+                + "\(Paths.formatBytes(totalBytes)) -> \(destination.path)")
         let started = Date()
         try await ParallelDownloader().download(
             repo: spec.repo, files: files, into: destination
         ) { done in
-            let fraction = totalBytes > 0 ? Double(done) / Double(totalBytes) : 0
+            // With no total to divide by, the bar cannot move - but the byte count can, and
+            // a moving number is the difference between "downloading" and "dead".
+            guard totalBytes > 0 else {
+                onProgress(-1, "\(Paths.formatBytes(done)) downloaded")
+                return
+            }
+            let fraction = Double(done) / Double(totalBytes)
             let elapsed = max(Date().timeIntervalSince(started), 1)
             let rate = Double(done) / elapsed
             let remaining = rate > 0 ? Double(totalBytes - done) / rate : 0
