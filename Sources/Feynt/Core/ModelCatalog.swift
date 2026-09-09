@@ -2,10 +2,22 @@ import Foundation
 
 /// A model the app offers, together with the drafter that makes it fast.
 ///
-/// The catalog is closed on purpose, but the rule is not "few models" - it is that every
-/// entry has a matching DFlash drafter. A target without one runs at plain decode speed,
-/// which is the one thing this app exists to avoid, so listing it would sell a promise the
-/// app cannot keep for that row.
+/// The catalog is closed on purpose, and the rule is not "few models" or even "has a
+/// drafter" - it is that speculation measurably speeds the model up. Every candidate was
+/// run here against its own plain decode, warm, twice:
+///
+///     Qwen3.8-27B Uncensored   14.6 -> 40   tok/s   2.7x   4.10 accepted per round
+///     Qwen3.6-27B              17.2 -> 41   tok/s   2.4x   4.86
+///     Qwen3.8-27B              18.6 -> 35   tok/s   1.9x   3.77
+///     Qwen3.6-35B-A3B          73   -> 121  tok/s   1.7x   7.08
+///     ---------------------------------------------------- dropped below here
+///     Qwen3.5-27B              17.9 -> 26   tok/s   1.4x   4.12
+///     Qwen3.5-35B-A3B          74   -> 81   tok/s   1.1x   3.95
+///     Qwen3.5-9B               55.9 -> 57   tok/s   1.0x   3.10
+///
+/// The whole 3.5 generation went: its drafters are DFlash 1, without the candidate
+/// selector, and the acceptance shows it. Listing a model that speculation cannot help
+/// sells the one promise this app exists to make.
 /// Sizes are the repository's root listing measured on the Hub, not estimates: they drive
 /// the free-space check and the download bar, and a repository that publishes several
 /// quantisations makes a guess wrong by a factor of six.
@@ -66,25 +78,6 @@ enum ModelCatalog {
         drafterRepo: "z-lab/Qwen3.6-27B-DFlash",
         drafterApproximateBytes: 3_500_000_000)
 
-    static let qwen35 = ModelSpec(
-        id: "qwen35-27b",
-        title: "Qwen3.5-27B",
-        subtitle: "previous generation",
-        repo: "mlx-community/Qwen3.5-27B-4bit",
-        approximateBytes: 16_000_000_000,
-        drafterRepo: "z-lab/Qwen3.5-27B-DFlash",
-        drafterApproximateBytes: 4_300_000_000)
-
-    /// The small one: fits comfortably where a 27B does not, and answers sooner.
-    static let qwen35small = ModelSpec(
-        id: "qwen35-9b",
-        title: "Qwen3.5-9B",
-        subtitle: "light",
-        repo: "mlx-community/Qwen3.5-9B-4bit",
-        approximateBytes: 6_000_000_000,
-        drafterRepo: "z-lab/Qwen3.5-9B-DFlash",
-        drafterApproximateBytes: 2_600_000_000)
-
     /// Mixture-of-experts targets. Only about 3B of the 35B parameters are read per token,
     /// and decode here is bound by exactly that traffic, so these run several times faster
     /// than a dense 27B on the same machine while holding a comparable footprint on disk.
@@ -97,18 +90,7 @@ enum ModelCatalog {
         drafterRepo: "z-lab/Qwen3.6-35B-A3B-DFlash",
         drafterApproximateBytes: 800_000_000)
 
-    static let qwen35moe = ModelSpec(
-        id: "qwen35-35b-a3b",
-        title: "Qwen3.5-35B-A3B",
-        subtitle: "MoE",
-        repo: "mlx-community/Qwen3.5-35B-A3B-4bit",
-        approximateBytes: 20_400_000_000,
-        drafterRepo: "z-lab/Qwen3.5-35B-A3B-DFlash",
-        drafterApproximateBytes: 800_000_000)
-
-    static let all: [ModelSpec] = [
-        uncensored, stock, qwen36moe, qwen36, qwen35moe, qwen35, qwen35small,
-    ]
+    static let all: [ModelSpec] = [uncensored, stock, qwen36moe, qwen36]
 
     static func model(id: String) -> ModelSpec? {
         all.first { $0.id == id }
