@@ -44,6 +44,13 @@ struct ModelView: View {
                 Spacer()
                 Button(active ? "Active" : "Switch") { switchTo(spec) }
                     .disabled(active || engine.state.isBusy || downloader.isDownloading)
+                // The window that lists what is on disk is the place to say "this copy is
+                // wrong, fetch it again" - it was reachable only from the menu bar and the
+                // chat, which is not where anyone looks for it.
+                if location != nil {
+                    Button("Re-download") { state.redownload(spec) }
+                        .disabled(engine.state.isBusy || downloader.isDownloading)
+                }
             }
             Text(location?.path ?? "not downloaded")
                 .font(.system(.caption, design: .monospaced))
@@ -69,6 +76,9 @@ struct ModelView: View {
                 Spacer()
                 Text(engine.speculative ? "in use" : "inactive")
                     .foregroundStyle(engine.speculative ? .green : .secondary)
+                // The drafter travels with its model, so re-fetching one re-fetches both.
+                Button("Re-download") { state.redownload(spec) }
+                    .disabled(engine.state.isBusy || downloader.isDownloading)
             }
             Text(ModelResolver.installedLocation(for: spec.drafter)?.path ?? "not downloaded")
                 .font(.system(.caption, design: .monospaced))
