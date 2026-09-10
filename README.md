@@ -1,131 +1,160 @@
 # Feynt
 
-Локальные языковые модели на Apple Silicon, вдвое быстрее обычного: маленькая
-модель-черновик делает финт — предлагает блок из восьми токенов, — а большая
-подтверждает их одним проходом. Отсюда и название.
+Local language models on Apple Silicon at 2.7x the speed of plain decoding: a small drafter
+model pulls a feint, proposing a block of eight tokens, and the large one confirms them in a
+single pass. Hence the name.
 
-Приложение живёт в строке меню. Внутри чат, мастер первого запуска и
-OpenAI-совместимый сервер. Движок работает **в самом приложении** через MLX Swift:
-ни Python, ни дочернего процесса, ни установки чего-либо заранее.
+The app lives in the menu bar. Inside it there is a chat, a first-run wizard and an
+OpenAI-compatible server. The engine runs **inside the app** through MLX Swift: no Python,
+no child process, nothing to install beforehand.
 
-## Установка
+## Install
 
 ```sh
 brew install --cask random1st/feynt/feynt
 ```
 
-Полное имя подключает tap само. Если Homebrew попросит сначала доверять ему —
-`brew trust random1st/feynt`, и повторить.
+The full name taps the repository itself. If Homebrew asks you to trust it first, run
+`brew trust random1st/feynt` and repeat.
 
-Приложение подписано Developer ID и нотаризовано Apple; билет вшит в DMG, так что
-Gatekeeper пропускает его без ручного снятия карантина. Требуется macOS 14+.
+The app is signed with a Developer ID and notarised by Apple, and both the app and the DMG
+carry their own ticket, so the first launch needs no network round trip and no manual
+quarantine dance. macOS 14 or newer.
 
-## Почему быстрее
+## Where the speed comes from
 
-Декодирование упирается не в вычисления, а в чтение весов: один токен стоит полного
-прохода по 16 ГБ. Проверка блока черновых токенов читает те же веса **один раз**, поэтому
-скорость определяется тем, сколько черновиков переживает проверку.
+Decoding is bound by reading the weights rather than by arithmetic: one token costs a full
+sweep over 16 GB. Verifying a block of drafted tokens reads those same weights **once**, so
+throughput follows how many drafts survive verification.
 
-Встроенная в модель MTP-голова черновит по одному токену и даёт 2.3–2.6 принятых токена
-за раунд. [DFlash 2](https://github.com/random1st/dflash-swift) предлагает блок целиком
-за один проход и даёт 4.1–5.7 на той же модели. Выход при этом остаётся выходом большой
-модели: она подтверждает каждый токен.
+The MTP head built into the model drafts one token at a time and lands 2.3–2.6 accepted
+tokens per round. [DFlash 2](https://github.com/random1st/dflash-swift) proposes a whole
+block in one forward pass and lands 4.1–5.7 on the same model. The output is still the large
+model's own: it confirms every token.
 
-Чтобы это окупалось, проверка блока должна стоить примерно столько же, сколько проверка
-одного токена. На стоковых ядрах MLX это не так: квантованный matmul перечитывает веса на
-каждую строку, и проход на восьми строках стоил 3.07 прохода на одной. Ядро на
-`simdgroup_matrix` читает и разжимает каждую группу весов один раз на весь блок — те же
-восемь строк стоят **1.51**. Отсюда весь блок целиком и **1.45x** к предыдущей версии
-на том же железе и промпте.
+For that to pay off, verifying a block has to cost about what verifying a single token
+costs. On stock MLX kernels it does not: a quantised matmul re-reads the weights per row,
+and a forward on eight rows cost 3.07 forwards on one. A kernel built on `simdgroup_matrix`
+reads and dequantises each weight group once for the whole block, and those same eight rows
+cost **1.51**. That is what makes the full block worth drafting, and it is worth **1.45x**
+end to end on the same hardware and prompt.
 
-Второй источник пауз — не генерация, а префилл: каждый ход диалога заново присылает всю
-историю, и модель перечитывала её целиком. Теперь состояние недавних промптов остаётся в
-памяти, и второй ход разговора переиспользует **1024 из 1042** токенов промпта —
-префилл в 28 раз быстрее холодного, ответ при этом посимвольно тот же.
+The second source of pauses is prefill rather than generation: every turn of a conversation
+re-sends the whole history, and the model used to re-read all of it. The state of recent
+prompts now stays in memory, and the second turn reuses **1024 of 1042** prompt tokens:
+prefill is 28 times faster than cold, and the answer is identical to the character.
 
-## Модели
+## Models
 
-Две, одно поколение, один драфтер. Модель попадает в список, только если спекуляция её
-реально ускоряет — каждый кандидат прогонялся против собственного обычного декода, на
-прогретом кэше, дважды.
+Two of them, one generation, one drafter. A model gets listed only if speculation measurably
+speeds it up; every candidate was run against its own plain decode, warm, twice.
 
-| Модель | Обычный декод | Со спекуляцией | Ускорение | Принято за раунд |
+| Model | Plain decode | With speculation | Speedup | Accepted per round |
 |---|---:|---:|---:|---:|
 | Qwen3.8-27B Uncensored | 14.6 | 40 | **2.7x** | 4.10 |
 | Qwen3.8-27B | 18.6 | 35 | 1.9x | 3.77 |
 
-Токенов в секунду, M3 Max. Обе модели используют `incoai/Qwen3.8-27B-DFlash2` — единственный
-существующий для Qwen драфтер второго поколения, с селектором кандидатов.
+Tokens per second, M3 Max. Both models use `incoai/Qwen3.8-27B-DFlash2`, the only
+second-generation drafter that exists for a Qwen, the one with the candidate selector.
 
-Поколение 3.5 не прошло замер: у Qwen3.5-9B ускорение оказалось ровно нулевым (57 против
-56), у MoE 3.5 — 1.1x. Поколение 3.6 убрано сознательно, ради одного поддерживаемого
-поколения вместо трёх; там оставалась MoE 35B-A3B на 121 tok/s — самое быстрое, что здесь
-измерялось.
+The 3.5 generation failed the measurement: Qwen3.5-9B gained exactly nothing (57 against
+56), and the 3.5 MoE managed 1.1x. The 3.6 generation was dropped deliberately, to support
+one generation instead of three; it held the 35B-A3B MoE at 121 tok/s, the fastest thing
+measured here.
 
-Уже скачанные веса находятся до того, как приложение предложит что-то качать. Модели
-живут в `~/Library/Application Support/Feynt/models`.
+Weights that are already on disk are found before the app offers to download anything.
+Models live in `~/Library/Application Support/Feynt/models`.
 
-## Что умеет
+## What it does
 
-- Мастер первого запуска: проверка памяти и диска → выбор модели → загрузка недостающего
-  с прогрессом по реально записанным байтам.
-- Строка меню: состояние, живые tok/s, принятые токены за раунд, порт и копирование URL,
-  загрузка и выгрузка модели, чат, лог, таймаут простоя.
-- Чат со стримингом и отдельной сворачиваемой областью размышлений.
-- Выгрузка по простою: ссылки на веса сбрасываются, кэш MLX очищается, память
-  возвращается системе. Таймаут настраивается от минуты до часа или отключается.
-- Prefix-кэш: до четырёх разговоров держатся прогретыми (не больше 12 ГБ). Память здесь
-  тратится намеренно — чтобы не платить за один и тот же префилл дважды.
+- First-run wizard: memory and disk check, then a model choice, then a download of whatever
+  is missing with progress in bytes actually written.
+- Menu bar: state, live tok/s, accepted tokens per round, the port and a copy-URL button,
+  load and unload, re-download, chat, log, idle timeout.
+- Chat with streaming and a separate collapsible reasoning area, a model switcher and an
+  unload button in its top bar.
+- Idle unload: the references to the weights are dropped, the MLX cache is cleared and the
+  memory goes back to the system. The timeout runs from a minute to an hour, or off.
+- Prefix cache: up to four conversations stay warm, capped at 12 GB. The memory is spent on
+  purpose, so that the same prefill is never paid for twice.
+- Model downloads over ranged requests, 8 MB chunks, eight in flight: 45 MB/s against the
+  4 MB/s of a single-stream client. An interrupted download resumes, a rejected chunk is
+  retried, and a file appears under its real name only once it is whole.
 
-## Сервер
+## Server
 
-Поднимается вместе с моделью, слушает только loopback, без сторонних HTTP-зависимостей.
-Запросы обрабатываются строго по одному — GPU не делится.
+It comes up with the model, listens on loopback only and has no third-party HTTP
+dependencies. Requests are served strictly one at a time, because the GPU is not shared.
 
-| Метод | Путь | Что делает |
+| Method | Path | What it does |
 |---|---|---|
-| POST | `/v1/chat/completions` | обычный ответ и SSE при `stream: true` |
-| GET | `/v1/models` | список моделей |
+| POST | `/v1/chat/completions` | a plain answer, or SSE when `stream: true` |
+| GET | `/v1/models` | the model list |
 | GET | `/health` | `ok` / `loading` / `no_model` / `error` |
-| GET | `/metrics` | запросы, токены, скорость, принятые токены за раунд |
+| GET | `/metrics` | requests, tokens, speed, accepted tokens per round |
 
-Учитываются `messages`, `max_tokens`, `stream`, `temperature` и
-`chat_template_kwargs.enable_thinking`; незнакомые поля игнорируются. Размышления
-приходят отдельно, в `reasoning_content`.
+`messages`, `max_tokens`, `stream`, `temperature` and
+`chat_template_kwargs.enable_thinking` are honoured; unknown fields are ignored. Message
+content may be a string or a list of typed parts. Reasoning arrives separately, in
+`reasoning_content`.
 
 ```sh
 curl http://127.0.0.1:19234/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"local","messages":[{"role":"user","content":"привет"}],"max_tokens":256}'
+  -d '{"model":"local","messages":[{"role":"user","content":"hello"}],"max_tokens":256}'
 ```
 
-Спекуляция работает при жадном декодировании; запрос с `temperature > 0` обслуживается
-обычным путём, без неё.
+The listener stays up when the idle timeout unloads the weights, and a completion request
+loads them again on demand.
 
-## Сборка из исходников
+Speculation runs under greedy decoding; a request with `temperature > 0` is served by the
+plain path without it.
+
+## Diagnosing a download
+
+```sh
+/Applications/Feynt.app/Contents/MacOS/Feynt --download uncensored
+```
+
+This runs the wizard's download inside the real bundle and prints the endpoint, the pinned
+commit, the bytes as they arrive and the reason if it stops. Model ids are `uncensored` and
+`stock`.
+
+## Building from source
 
 ```sh
 ./package-app.sh release     # build/Feynt.app
-./release.sh 0.2.0           # подписанный DMG, нотаризация, вшитый билет
+./release.sh 0.4.4           # signed DMG, notarised, ticket attached
 ```
 
-Требуется macOS 14+ и Xcode 16+. Зависимости тянутся из сети, включая
-[DFlashKit](https://github.com/random1st/dflash-swift) и форк `mlx-swift-lm` с двумя
-патчами, которые нужны драфту (съём скрытых состояний нескольких слоёв и откат
-рекуррентного состояния после частичного приёма).
+macOS 14+ and Xcode 16+. Dependencies are fetched from the network, including
+[DFlashKit](https://github.com/random1st/dflash-swift) and a fork of `mlx-swift-lm` with the
+two patches the drafter needs: hidden states tapped from several layers, and rollback of the
+recurrent state after a partial accept.
 
-Подпись по умолчанию ad-hoc. Для распространяемой сборки:
+Signing is ad-hoc by default. For a distributable build:
 
 ```sh
 FEYNT_SIGN_IDENTITY="Developer ID Application: …" ./package-app.sh release
 ```
 
-Тесты запускать через `xcodebuild`, а не `swift test`: из SwiftPM-теста `mlx-swift`
-не находит свой metallib.
+Run the tests through `xcodebuild` rather than `swift test`: from a SwiftPM test run
+`mlx-swift` does not find its metallib.
 
-## Архитектура
+## Architecture
 
-`InferenceEngine` — шов между интерфейсом и тем, что крутит веса. `DFlashEngine`
-реализует его через DFlashKit, `MLXEngine` остаётся запасным путём для случаев,
-которые спекуляция пока не покрывает. Веса при этом грузятся один раз и передаются
-между ними: вторая копия 16 ГБ никому не нужна.
+`InferenceEngine` is the seam between the interface and whatever turns the weights.
+`DFlashEngine` implements it through DFlashKit; `MLXEngine` remains the fallback for the
+cases speculation does not cover yet. The weights are loaded once and handed between them,
+because nobody needs a second copy of 16 GB.
+
+## Credits
+
+The method and the drafter are not mine. DFlash comes from
+[z-lab](https://github.com/z-lab/dflash) ("DFlash: Block Diffusion for Flash Speculative
+Decoding", Chen et al., arXiv:2602.06036, MIT); the DFlash 2 components are from
+[sglang](https://github.com/sgl-project/sglang) (Apache 2.0); the checkpoints are published
+by Inco AI (Apache 2.0); and this port was written against
+[mlx-dspark](https://github.com/ARahim3/mlx-dspark) (MIT), whose `small_m_qmm` kernel it
+also carries. See the [NOTICE](https://github.com/random1st/dflash-swift/blob/main/NOTICE)
+in DFlashKit for the full attribution.
