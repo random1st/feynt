@@ -6,7 +6,8 @@ import Foundation
 /// stays only if speculation actually speeds it up - and everything that passed it was run
 /// against its own plain decode, warm, twice:
 ///
-///     Qwen3.8-27B Uncensored   14.6 -> 40   tok/s   2.7x   4.10 accepted per round
+///     Qwen3.6-35B-A3B Uncens.  86.2 -> 95   tok/s   1.1x   3.74 accepted per round
+///     Qwen3.8-27B Uncensored   14.6 -> 40   tok/s   2.7x   4.10
 ///     Qwen3.8-27B              18.6 -> 35   tok/s   1.9x   3.77
 ///     ---------------------------------------------------- dropped
 ///     Qwen3.6-27B              17.2 -> 41   tok/s   2.4x   4.86
@@ -69,7 +70,22 @@ enum ModelCatalog {
         drafterRepo: dflash2_27B,
         drafterApproximateBytes: 3_700_000_000)
 
-    static let all: [ModelSpec] = [uncensored, stock]
+    /// Roman's daily model, and the exception to the rule above: speculation buys only
+    /// 1.1x here (86.2 -> 95 tok/s, 3.74 accepted per round), because the drafter was
+    /// trained against the original weights and this is an abliterated variant of them.
+    /// It is listed anyway because it is the fastest model in this catalog by a wide
+    /// margin: a MoE reads ~3B of its 35B parameters per token, so even unaccelerated it
+    /// runs at twice what the dense 27B reaches with speculation.
+    static let uncensoredMoE = ModelSpec(
+        id: "uncensored-moe",
+        title: "Qwen3.6-35B-A3B Uncensored",
+        subtitle: "MoE, uncensored, the fastest",
+        repo: "froggeric/Qwen3.6-35B-A3B-Uncensored-Heretic-MLX-4bit",
+        approximateBytes: 19_600_000_000,
+        drafterRepo: "z-lab/Qwen3.6-35B-A3B-DFlash",
+        drafterApproximateBytes: 771_800_000)
+
+    static let all: [ModelSpec] = [uncensoredMoE, uncensored, stock]
 
     static func model(id: String) -> ModelSpec? {
         all.first { $0.id == id }
