@@ -32,6 +32,8 @@ struct ChatView: View {
                     } label: {
                         if spec.id == state.settings.selectedModelID {
                             Label(spec.title, systemImage: "checkmark")
+                        } else if engine.loadedModels.contains(where: { $0.id == spec.id }) {
+                            Text("\(spec.title) — in memory")
                         } else {
                             Text(spec.title)
                         }
@@ -79,7 +81,7 @@ struct ChatView: View {
                 // drafter swapped on disk. Unload-then-load is the cure, and asking for it
                 // twice by hand is not an interface.
                 Button {
-                    Task { await engine.switchTo(state.settings.selectedModel) }
+                    Task { await engine.reload(state.settings.selectedModel) }
                 } label: {
                     Label("Reload", systemImage: "arrow.clockwise")
                 }

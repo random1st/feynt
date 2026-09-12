@@ -22,6 +22,10 @@ struct MenuBarContent: View {
 
         Text(engine.speculative ? "Mode: speculative decoding" : "Mode: plain decoding")
 
+        if engine.loadedModels.count > 1 {
+            Text("In memory: " + engine.loadedModels.map(\.title).joined(separator: ", "))
+        }
+
         if engine.stats.tokensPerSecond > 0 {
             Text(String(format: "Speed: %.1f tok/s", engine.stats.tokensPerSecond))
             Text(String(format: "Accepted per round: %.2f", engine.stats.acceptedPerStep))
@@ -54,25 +58,29 @@ struct MenuBarContent: View {
 
         // The menu bar is where the model gets picked: it is the surface that is always
         // there. Load lists only what is on disk and Download only what is not, so each
-        // item says exactly what the click will cost - a switch, or gigabytes. Download
-        // stops at the download; the model is loaded when it is picked under Load.
-        // Re-download does not belong here; it lives in the model window next to the
-        // path and size it acts on.
+        // item says exactly what the click will cost - a switch, or gigabytes. A model
+        // picked under Load stays in memory when another is picked, so switching back is
+        // instant; Unload lists what is resident. Download stops at the download; the
+        // model is loaded when it is picked under Load. Re-download does not belong here;
+        // it lives in the model window next to the path and size it acts on.
         Menu("Load model") {
             ForEach(installed) { spec in
-                let loaded =
+                let active =
                     settings.selectedModelID == spec.id
                     && (engine.state == .ready || engine.state.isBusy)
+                let resident = engine.loadedModels.contains { $0.id == spec.id }
                 Button {
                     state.switchModel(to: spec)
                 } label: {
-                    if loaded {
+                    if active {
                         Label(spec.title, systemImage: "checkmark")
+                    } else if resident {
+                        Text("\(spec.title) — in memory")
                     } else {
                         Text(spec.title)
                     }
                 }
-                .disabled(loaded || engine.state.isBusy || downloading)
+                .disabled(active || engine.state.isBusy || downloading)
             }
         }
         .disabled(installed.isEmpty)
@@ -90,11 +98,15 @@ struct MenuBarContent: View {
             }
         }
 
-        if engine.state == .ready || engine.state.isBusy {
-            Button("Unload model") {
-                Task { await engine.unload() }
+        if !engine.loadedModels.isEmpty {
+            Menu("Unload model") {
+                ForEach(engine.loadedModels) { spec in
+                    Button(spec.title) {
+                        Task { await engine.unload(spec) }
+                    }
+                    .disabled(engine.state == .generating && settings.selectedModelID == spec.id)
+                }
             }
-            .disabled(engine.state == .generating)
         }
 
         Button("Open chat") {

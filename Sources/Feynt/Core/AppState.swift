@@ -18,8 +18,9 @@ final class AppState: ObservableObject {
         let settings = AppSettings()
         // DFlash 2 drives generation; the MLXEngine handed to it is the fallback for the
         // requests its greedy loop does not serve, and it shares the same loaded weights.
+        // Every resident model gets its own pair, so nothing is shared across models.
         let engine = EngineController(
-            engine: DFlashEngine(fallback: MLXEngine()), settings: settings)
+            makeEngine: { DFlashEngine(fallback: MLXEngine()) }, settings: settings)
         let api = APIServer(engine: engine, settings: settings)
         self.settings = settings
         self.engine = engine
@@ -45,11 +46,13 @@ final class AppState: ObservableObject {
     /// window - and a second copy would be a second set of rules about what "switch" means.
     func switchModel(to spec: ModelSpec) {
         let missing = missingArtifacts(for: spec)
-        settings.selectedModelID = spec.id
         guard !missing.isEmpty else {
             Task { await engine.switchTo(spec) }
             return
         }
+        // Selected before the download so the UI shows the chosen model while it arrives;
+        // the controller sets it again when the weights are in.
+        settings.selectedModelID = spec.id
         downloader.download(missing) { success in
             guard success else { return }
             Task { await self.engine.switchTo(spec) }
@@ -74,7 +77,7 @@ final class AppState: ObservableObject {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         Task {
-            await engine.unload()
+            await engine.unload(spec)
             for artifact in [spec, spec.drafter] {
                 if let location = ModelResolver.installedLocation(for: artifact) {
                     try? FileManager.default.removeItem(at: location)

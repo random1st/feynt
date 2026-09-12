@@ -87,7 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         AppLog.write("app terminating")
-        Task { @MainActor in await AppState.shared.engine.unload() }
+        Task { @MainActor in await AppState.shared.engine.unloadAll() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

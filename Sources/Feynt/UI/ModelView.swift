@@ -44,6 +44,9 @@ struct ModelView: View {
                 Spacer()
                 Button(active ? "Active" : "Switch") { switchTo(spec) }
                     .disabled(active || engine.state.isBusy || downloader.isDownloading)
+                if !active, engine.loadedModels.contains(where: { $0.id == spec.id }) {
+                    Text("in memory").font(.caption).foregroundStyle(.green)
+                }
                 // The window that lists what is on disk is the place to say "this copy is
                 // wrong, fetch it again" - it was reachable only from the menu bar and the
                 // chat, which is not where anyone looks for it.

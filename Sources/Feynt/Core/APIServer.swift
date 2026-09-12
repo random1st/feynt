@@ -135,7 +135,8 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
 
     private func healthPayload() -> [String: Any] {
         var payload: [String: Any] = [
-            "model": settings.selectedModel.repo,
+            "model": engine.activeModel?.repo ?? settings.selectedModel.repo,
+            "loaded": engine.loadedModels.map(\.repo),
             "mode": engine.stats.speculative ? "speculative" : "plain",
         ]
         switch engine.state {
@@ -151,7 +152,7 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
 
     private func metricsPayload() -> [String: Any] {
         [
-            "model": settings.selectedModel.repo,
+            "model": engine.activeModel?.repo ?? settings.selectedModel.repo,
             "mode": engine.stats.speculative ? "speculative" : "plain",
             "requests": metrics.requests,
             "prompt_tokens": metrics.promptTokens,
@@ -163,7 +164,7 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
 
     private func modelsPayload() -> [String: Any] {
         let created = Int(Date().timeIntervalSince1970)
-        let ids = ["local", settings.selectedModel.repo]
+        let ids = ["local"] + ModelCatalog.all.filter(ModelResolver.isPresent).map(\.repo)
         return [
             "object": "list",
             "data": ids.map {
@@ -187,6 +188,29 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
                 ])
             return
         }
+        guard let spec = resolveModel(parsed.model) else {
+            responder.sendJSON(
+                status: 404,
+                object: [
+                    "error": [
+                        "message":
+                            "unknown model '\(parsed.model ?? "")'; GET /v1/models lists what "
+                            + "this server has",
+                        "code": "model_not_found",
+                    ]
+                ])
+            return
+        }
+        guard ModelResolver.isPresent(spec) else {
+            responder.sendJSON(
+                status: 404,
+                object: [
+                    "error": [
+                        "message": "\(spec.title) is not downloaded", "code": "model_not_found",
+                    ]
+                ])
+            return
+        }
         metrics.requests += 1
 
         Task { [weak self] in
@@ -194,12 +218,24 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
             // One generation at a time; everything else queues behind this.
             await self.gate.acquire()
             defer { Task { await self.gate.release() } }
-            await self.run(parsed, responder: responder)
+            await self.run(parsed, spec: spec, responder: responder)
         }
     }
 
-    private func run(_ request: ChatRequest, responder: HTTPResponder) async {
-        guard await engine.ensureLoaded() else {
+    /// Clients like pi name a model. With more than one resident the name decides which
+    /// one answers, and an unknown name is an error rather than silently the current one:
+    /// a typo would otherwise run on the wrong weights and nobody would know.
+    private func resolveModel(_ name: String?) -> ModelSpec? {
+        guard let name, !name.isEmpty, name != "local" else { return settings.selectedModel }
+        let wanted = name.lowercased()
+        return ModelCatalog.all.first { spec in
+            [spec.id, spec.repo, spec.title, spec.directoryName].contains { $0.lowercased() == wanted }
+                || spec.repo.lowercased().hasSuffix("/" + wanted)
+        }
+    }
+
+    private func run(_ request: ChatRequest, spec: ModelSpec, responder: HTTPResponder) async {
+        guard await engine.ensureLoaded(spec) else {
             responder.sendJSON(
                 status: 503, object: ["error": ["message": "no model loaded"]])
             return
@@ -220,7 +256,7 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
         }
 
         let id = "chatcmpl-\(UUID().uuidString.prefix(24))"
-        let model = settings.selectedModel.repo
+        let model = spec.repo
         var text = ""
         var reasoning = ""
         var stats = GenerationStats()
@@ -302,6 +338,7 @@ private struct ChatRequest {
     let temperature: Float
     let stream: Bool
     let thinking: Bool?
+    let model: String?
 
     /// OpenAI messages carry either a string or a list of typed parts, and real clients
     /// send both: pi puts its system prompt in a string and the user's turn in
@@ -340,6 +377,7 @@ private struct ChatRequest {
         // server still reported that speculation was on.
         temperature = (root["temperature"] as? NSNumber).map { $0.floatValue } ?? 0
         stream = (root["stream"] as? Bool) ?? false
+        model = root["model"] as? String
         let kwargs = root["chat_template_kwargs"] as? [String: Any]
         thinking = kwargs?["enable_thinking"] as? Bool
     }
