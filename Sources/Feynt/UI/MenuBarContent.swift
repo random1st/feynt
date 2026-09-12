@@ -33,27 +33,69 @@ struct MenuBarContent: View {
 
         Button("Copy URL") { Pasteboard.copy(api.baseURL) }
 
-        if let path = ModelResolver.installedLocation(for: settings.selectedModel)?.path {
-            Button("Copy model path") { Pasteboard.copy(path) }
+        let installed = ModelCatalog.all.filter { ModelResolver.isPresent($0) }
+        let missing = ModelCatalog.all.filter { !ModelResolver.isPresent($0) }
+        let downloading = state.downloader.isDownloading
+
+        Menu("Copy model path") {
+            ForEach(installed) { spec in
+                if let path = ModelResolver.installedLocation(for: spec)?.path {
+                    Button(spec.title) { Pasteboard.copy(path) }
+                }
+            }
         }
+        .disabled(installed.isEmpty)
 
         Divider()
 
-        if engine.state == .unloaded {
-            Button("Load model") {
-                Task { await engine.load(settings.selectedModel) }
+        if downloading {
+            Text("Downloading — \(state.downloader.detail)")
+        }
+
+        // The menu bar is where the model gets picked: it is the surface that is always
+        // there. Load lists only what is on disk and Download only what is not, so each
+        // item says exactly what the click will cost - a switch, or gigabytes. Download
+        // stops at the download; the model is loaded when it is picked under Load.
+        // Re-download does not belong here; it lives in the model window next to the
+        // path and size it acts on.
+        Menu("Load model") {
+            ForEach(installed) { spec in
+                let loaded =
+                    settings.selectedModelID == spec.id
+                    && (engine.state == .ready || engine.state.isBusy)
+                Button {
+                    state.switchModel(to: spec)
+                } label: {
+                    if loaded {
+                        Label(spec.title, systemImage: "checkmark")
+                    } else {
+                        Text(spec.title)
+                    }
+                }
+                .disabled(loaded || engine.state.isBusy || downloading)
             }
-        } else {
+        }
+        .disabled(installed.isEmpty)
+
+        if !missing.isEmpty {
+            Menu("Download model") {
+                ForEach(missing) { spec in
+                    let artifacts = state.missingArtifacts(for: spec)
+                    let bytes = artifacts.reduce(Int64(0)) { $0 + $1.approximateBytes }
+                    Button("\(spec.title) — \(Paths.formatBytes(bytes))") {
+                        state.downloader.download(artifacts) { _ in }
+                    }
+                    .disabled(downloading)
+                }
+            }
+        }
+
+        if engine.state == .ready || engine.state.isBusy {
             Button("Unload model") {
                 Task { await engine.unload() }
             }
             .disabled(engine.state == .generating)
         }
-
-        Button("Re-download model…") {
-            state.redownload(settings.selectedModel)
-        }
-        .disabled(engine.state.isBusy)
 
         Button("Open chat") {
             NSApp.activate(ignoringOtherApps: true)
