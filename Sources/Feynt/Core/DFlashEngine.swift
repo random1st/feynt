@@ -86,11 +86,16 @@ actor DFlashEngine: InferenceEngine {
         }
         do {
             let drafter = try DFlashDraftModel.load(directory: drafterDirectory)
+            let generator = DFlashSpeculativeGenerator(
+                target: target, drafter: drafter, prefixCache: prefixCache)
+            // The round's shape decides how many target forwards a reply costs, so it
+            // belongs in the log next to the block width rather than being inferred
+            // from the tokens per second afterwards.
             AppLog.write(
                 "loaded drafter \(drafterDirectory.lastPathComponent), "
-                    + "block \(drafter.configuration.blockSize)")
-            return DFlashSpeculativeGenerator(
-                target: target, drafter: drafter, prefixCache: prefixCache)
+                    + "block \(drafter.configuration.blockSize), "
+                    + "round \(generator.treeSpeculation ? "tree" : "chain")")
+            return generator
         } catch {
             AppLog.write("drafter unusable (\(error.localizedDescription)); speculation off")
             return nil
