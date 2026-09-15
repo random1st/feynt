@@ -34,11 +34,19 @@ actor MLXEngine: InferenceEngine {
 
         let tokenizerLoader = #huggingFaceTokenizerLoader()
         do {
-            context = try await loadModel(from: modelDirectory, using: tokenizerLoader)
+            var loaded = try await loadModel(from: modelDirectory, using: tokenizerLoader)
+            // The generation loop parses tool calls with whatever format this configuration
+            // names, defaulting to `.json`. Loading from a directory leaves it nil — the
+            // library only fills it for models named in its own registry — so an LFM2 model
+            // would have every `<|tool_call_start|>` call read as plain text. Resolve it here.
+            loaded.configuration.toolCallFormat = ToolBridge.format(
+                for: loaded, directory: modelDirectory)
+            context = loaded
         } catch {
             throw EngineError.loadFailed(error.localizedDescription)
         }
-        AppLog.write("loaded target \(modelDirectory.lastPathComponent)")
+        AppLog.write("loaded target \(modelDirectory.lastPathComponent)"
+            + ", tool calls: \(context?.configuration.toolCallFormat?.rawValue ?? "none")")
 
         if let drafterDirectory {
             drafter = await loadDrafter(directory: drafterDirectory, tokenizerLoader: tokenizerLoader)
@@ -99,17 +107,12 @@ actor MLXEngine: InferenceEngine {
     ) async throws -> AsyncStream<EngineEvent> {
         guard let context else { throw EngineError.notLoaded }
 
-        let messages = turns.map { turn -> Chat.Message in
-            switch turn.role {
-            case .system: return .system(turn.content)
-            case .user: return .user(turn.content)
-            case .assistant: return .assistant(turn.content)
-            }
-        }
+        let messages = ToolBridge.messages(from: turns)
         // Qwen's chat template reads `enable_thinking`; off by default because with thinking
         // on the model can spend the whole budget reasoning and return an empty answer.
         let userInput = UserInput(
-            chat: messages, additionalContext: ["enable_thinking": options.thinking])
+            chat: messages, tools: options.tools,
+            additionalContext: ["enable_thinking": options.thinking])
         let input = try await context.processor.prepare(input: userInput)
         let parameters = GenerateParameters(
             maxTokens: options.maxTokens, temperature: options.temperature, topP: 0.8)
@@ -136,8 +139,14 @@ actor MLXEngine: InferenceEngine {
                         for event in splitter.finish() { continuation.yield(event) }
                         continuation.yield(
                             .finished(Self.stats(from: info, speculative: speculative)))
-                    case .toolCall, .rejectedToolCall:
-                        break
+                    case .toolCall(let call):
+                        // The text that encoded this call is already withheld by the
+                        // library's stream decoder, so nothing here has to strip it.
+                        continuation.yield(.toolCall(ToolBridge.engineCall(from: call)))
+                    case .rejectedToolCall(let rejected):
+                        // Tool-call-shaped output that did not parse. Logged rather than
+                        // shown: as text it is protocol noise, and as a call it is a lie.
+                        AppLog.write("rejected tool call: \(rejected)")
                     }
                 }
                 for event in splitter.finish() { continuation.yield(event) }

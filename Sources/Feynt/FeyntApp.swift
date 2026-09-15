@@ -67,6 +67,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        // `Feynt --generate <model-id> <prompt>` is the same diagnostic one step further:
+        // load through the real engine stack and answer once, printing tok/s. Added when
+        // LFM2.5 joined the catalog — a new architecture has to be checked against the
+        // reference runtime (same prompt, greedy, compare text and rate), and doing that
+        // through the UI proves nothing about the headless path the API server uses.
+        if let index = CommandLine.arguments.firstIndex(of: "--generate") {
+            let args = CommandLine.arguments
+            let id = args.count > index + 1 ? args[index + 1] : ""
+            let prompt = args.count > index + 2 ? args[index + 2] : "Reply with exactly: ok"
+            runGenerateSelfTest(modelID: id, prompt: prompt)
+            return
+        }
+
         guard !AppState.shared.settings.wizardCompleted else { return }
         // A menu-bar-only app cannot show a window or take focus until it is briefly a
         // regular app; it drops back to accessory once setup finishes, so the Dock icon
@@ -120,5 +133,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard downloader.isDownloading else { return }
             print("  \(downloader.detail)")
         }
+    }
+
+    /// The diagnostic behind `--generate`: load the named catalog model through the engine
+    /// controller the app itself uses, answer one prompt greedily, print the counters.
+    @MainActor private func runGenerateSelfTest(modelID: String, prompt: String) {
+        guard let spec = ModelCatalog.model(id: modelID) else {
+            print("no such model: \(modelID)")
+            print("available: \(ModelCatalog.all.map(\.id).joined(separator: ", "))")
+            exit(2)
+        }
+        Task { @MainActor in await generateOnce(spec: spec, prompt: prompt) }
     }
 }

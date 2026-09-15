@@ -66,6 +66,12 @@ final class ChatStore: ObservableObject {
                         produced += chunk.count
                     case .reasoning(let chunk):
                         self.append(reasoning: chunk, to: placeholder.id)
+                    case .toolCall(let call):
+                        // The chat window offers no tools, so a call here means the model
+                        // invented one. Showing it as text is more honest than dropping it.
+                        self.append(
+                            text: "\n[tool call: \(call.name)\(call.argumentsJSON)]\n",
+                            to: placeholder.id)
                     case .finished(let stats):
                         self.engine.generationFinished(stats)
                     }

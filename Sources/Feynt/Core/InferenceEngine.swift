@@ -1,10 +1,28 @@
 import Foundation
 
 /// One turn of the conversation as the engine sees it.
+///
+/// An agent loop needs two turns a plain chat does not: the assistant turn that asked for
+/// tools, and the `tool` turn carrying what running them returned. Both have to go back
+/// into the prompt verbatim, or the model re-asks for a call it already made.
 struct EngineTurn: Sendable, Equatable {
-    enum Role: String, Sendable { case system, user, assistant }
+    enum Role: String, Sendable { case system, user, assistant, tool }
     let role: Role
     let content: String
+    /// Calls this assistant turn asked for, as `(name, JSON arguments)`; empty otherwise.
+    var toolCalls: [EngineToolCall] = []
+    /// For a `.tool` turn: the call it answers, and the tool's name.
+    var toolCallID: String? = nil
+    var toolName: String? = nil
+}
+
+/// A tool call in the shape both the API and the chat template want. Arguments stay as the
+/// raw JSON text the model produced: re-encoding them through a Swift dictionary loses key
+/// order and turns integers into doubles, and clients compare these strings.
+struct EngineToolCall: Sendable, Equatable {
+    let id: String
+    let name: String
+    let argumentsJSON: String
 }
 
 /// Streamed output. Reasoning is kept separate from the answer so the UI can dim and
@@ -12,6 +30,9 @@ struct EngineTurn: Sendable, Equatable {
 enum EngineEvent: Sendable {
     case text(String)
     case reasoning(String)
+    /// A tool call the model asked for. Emitted instead of the text that encoded it, so a
+    /// client never sees `<|tool_call_start|>` leak into the answer.
+    case toolCall(EngineToolCall)
     case finished(GenerationStats)
 }
 
@@ -37,6 +58,10 @@ struct GenerationOptions: Sendable {
     /// speculation was never engaged and the menu bar still claimed it was.
     var temperature: Float = 0
     var thinking: Bool = false
+    /// OpenAI-shaped tool definitions, passed straight to the chat template. The model has
+    /// to be told what exists before it can ask for it, and every model spells that
+    /// differently — the template owns the spelling, not this app.
+    var tools: [[String: any Sendable]]? = nil
 }
 
 enum EngineError: LocalizedError {

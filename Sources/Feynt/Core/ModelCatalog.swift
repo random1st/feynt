@@ -28,17 +28,19 @@ struct ModelSpec: Identifiable, Hashable {
     let subtitle: String
     let repo: String
     let approximateBytes: Int64
-    /// Repo of the DFlash drafter trained against this target.
-    let drafterRepo: String
+    /// Repo of the DFlash drafter trained against this target, when speculation pays for
+    /// itself here. `nil` is a measured decision, not a gap - see ``ModelCatalog/lfm``.
+    let drafterRepo: String?
     let drafterApproximateBytes: Int64
 
     var directoryName: String {
         repo.split(separator: "/").last.map(String.init) ?? repo
     }
 
-    /// The drafter as its own downloadable spec.
-    var drafter: ModelSpec {
-        ModelSpec(
+    /// The drafter as its own downloadable spec, or `nil` for a model that runs plain.
+    var drafter: ModelSpec? {
+        guard let drafterRepo else { return nil }
+        return ModelSpec(
             id: "\(id).drafter",
             title: "Drafter for \(title)",
             subtitle: "speculative drafter",
@@ -46,6 +48,14 @@ struct ModelSpec: Identifiable, Hashable {
             approximateBytes: drafterApproximateBytes,
             drafterRepo: drafterRepo,
             drafterApproximateBytes: drafterApproximateBytes)
+    }
+
+    /// Everything this model needs on disk: itself, and the drafter if it has one.
+    var artifacts: [ModelSpec] { [self] + (drafter.map { [$0] } ?? []) }
+
+    /// Bytes a fresh download costs.
+    var totalApproximateBytes: Int64 {
+        approximateBytes + (drafterRepo == nil ? 0 : drafterApproximateBytes)
     }
 }
 
@@ -85,7 +95,24 @@ enum ModelCatalog {
         drafterRepo: "z-lab/Qwen3.6-35B-A3B-DFlash",
         drafterApproximateBytes: 771_800_000)
 
-    static let all: [ModelSpec] = [uncensoredMoE, uncensored, stock]
+    /// The only entry here with no drafter, and the fastest thing in the catalog.
+    ///
+    /// A 32-expert MoE that activates ~1B parameters per token: on an M3 Max it decodes at
+    /// 204-208 tok/s against 110-119 for the 35B-A3B and 53-73 for the dense 27B (measured
+    /// 2026-09-14, 200 tokens, quiet machine). LiquidAI ships a drafter for it
+    /// (`LFM2.5-8B-A1B-DSpark`) and claims ~2.5x; here it is a net loss - 107-185 tok/s
+    /// against 204-208 plain - because a ~1B-active step is too cheap to amortise one.
+    /// So `drafterRepo` is nil on purpose, and `DFlashEngine` falls through to plain decode.
+    static let lfm = ModelSpec(
+        id: "lfm",
+        title: "LFM2.5-8B-A1B",
+        subtitle: "MoE, small and fastest",
+        repo: "LiquidAI/LFM2.5-8B-A1B-MLX-4bit",
+        approximateBytes: 4_800_000_000,
+        drafterRepo: nil,
+        drafterApproximateBytes: 0)
+
+    static let all: [ModelSpec] = [lfm, uncensoredMoE, uncensored, stock]
 
     static func model(id: String) -> ModelSpec? {
         all.first { $0.id == id }

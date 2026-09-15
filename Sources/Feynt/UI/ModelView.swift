@@ -70,20 +70,29 @@ struct ModelView: View {
     }
 
     /// The drafter belongs to whichever model is selected, so this row follows the
-    /// selection rather than naming a single shared accelerator.
-    private var drafterRow: some View {
+    /// selection rather than naming a single shared accelerator. A model that runs plain
+    /// (LFM2.5, where speculation measured net-negative) says so instead of showing an
+    /// empty accelerator that looks broken.
+    @ViewBuilder private var drafterRow: some View {
         let spec = ModelCatalog.model(id: settings.selectedModelID) ?? ModelCatalog.uncensored
-        return VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(spec.drafter.title)
+                Text(spec.drafter?.title ?? "No drafter for \(spec.title)")
                 Spacer()
-                Text(engine.speculative ? "in use" : "inactive")
-                    .foregroundStyle(engine.speculative ? .green : .secondary)
+                if spec.drafter == nil {
+                    Text("not needed").foregroundStyle(.secondary)
+                } else {
+                    Text(engine.speculative ? "in use" : "inactive")
+                        .foregroundStyle(engine.speculative ? .green : .secondary)
+                }
                 // The drafter travels with its model, so re-fetching one re-fetches both.
                 Button("Re-download") { state.redownload(spec) }
                     .disabled(engine.state.isBusy || downloader.isDownloading)
             }
-            Text(ModelResolver.installedLocation(for: spec.drafter)?.path ?? "not downloaded")
+            Text(spec.drafter.flatMap { ModelResolver.installedLocation(for: $0)?.path }
+                ?? (spec.drafter == nil
+                    ? "a ~1B-active step is too cheap to amortise a drafter"
+                    : "not downloaded"))
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)

@@ -91,7 +91,8 @@ final class EngineController: ObservableObject {
         state = .loading
         activeModel = spec
         settings.selectedModelID = spec.id
-        let drafterDirectory = ModelResolver.installedLocation(for: spec.drafter)
+        // No drafter in the spec means plain decode by design, not a missing download.
+        let drafterDirectory = spec.drafter.flatMap(ModelResolver.installedLocation(for:))
         let engine = makeEngine()
         do {
             try await engine.load(modelDirectory: modelDirectory, drafterDirectory: drafterDirectory)

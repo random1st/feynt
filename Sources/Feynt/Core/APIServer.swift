@@ -244,7 +244,8 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
         let options = GenerationOptions(
             maxTokens: request.maxTokens,
             temperature: request.temperature,
-            thinking: request.thinking ?? settings.thinkingByDefault)
+            thinking: request.thinking ?? settings.thinkingByDefault,
+            tools: request.tools)
 
         let stream: AsyncStream<EngineEvent>
         do {
@@ -259,6 +260,7 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
         let model = spec.repo
         var text = ""
         var reasoning = ""
+        var toolCalls: [EngineToolCall] = []
         var stats = GenerationStats()
 
         if request.stream { responder.beginEventStream() }
@@ -277,6 +279,16 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
                     responder.writeEvent(
                         Self.sseChunk(id: id, model: model, delta: ["reasoning_content": chunk]))
                 }
+            case .toolCall(let call):
+                toolCalls.append(call)
+                if request.stream {
+                    // OpenAI streams calls as indexed deltas; a client that assembles them
+                    // needs the index even when the whole call arrives in one piece.
+                    responder.writeEvent(
+                        Self.sseChunk(
+                            id: id, model: model,
+                            delta: ["tool_calls": [Self.toolCallJSON(call, index: toolCalls.count - 1)]]))
+                }
             case .finished(let value):
                 stats = value
             }
@@ -285,15 +297,24 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
         metrics.record(stats)
         engine.generationFinished(stats)
 
+        // A turn that ended in tool calls is not finished; a client that sees "stop" here
+        // will treat the empty content as the answer and never run the tools.
+        let finish = toolCalls.isEmpty ? "stop" : "tool_calls"
+
         if request.stream {
             responder.writeEvent(
-                Self.sseChunk(id: id, model: model, delta: [:], finish: "stop"))
+                Self.sseChunk(id: id, model: model, delta: [:], finish: finish))
             responder.writeEvent("data: [DONE]\n\n")
             responder.finish()
         } else {
             var message: [String: Any] = ["role": "assistant", "content": text]
             // The existing client reads the thinking block from this field.
             if !reasoning.isEmpty { message["reasoning_content"] = reasoning }
+            if !toolCalls.isEmpty {
+                message["tool_calls"] = toolCalls.enumerated().map {
+                    Self.toolCallJSON($1, index: $0)
+                }
+            }
             responder.sendJSON(
                 status: 200,
                 object: [
@@ -301,7 +322,7 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
                     "object": "chat.completion",
                     "created": Int(Date().timeIntervalSince1970),
                     "model": model,
-                    "choices": [["index": 0, "message": message, "finish_reason": "stop"]],
+                    "choices": [["index": 0, "message": message, "finish_reason": finish]],
                     "usage": [
                         "prompt_tokens": stats.promptTokens,
                         "completion_tokens": stats.generatedTokens,
@@ -309,6 +330,17 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
                     ],
                 ])
         }
+    }
+
+    /// One tool call in OpenAI's shape. `arguments` is a JSON *string*, not an object —
+    /// that is the wire format, and clients parse it themselves.
+    private static func toolCallJSON(_ call: EngineToolCall, index: Int) -> [String: Any] {
+        [
+            "index": index,
+            "id": call.id,
+            "type": "function",
+            "function": ["name": call.name, "arguments": call.argumentsJSON],
+        ]
     }
 
     private static func sseChunk(
@@ -339,6 +371,7 @@ private struct ChatRequest {
     let stream: Bool
     let thinking: Bool?
     let model: String?
+    let tools: [[String: any Sendable]]?
 
     /// OpenAI messages carry either a string or a list of typed parts, and real clients
     /// send both: pi puts its system prompt in a string and the user's turn in
@@ -365,9 +398,18 @@ private struct ChatRequest {
         }
         let rawMessages = root["messages"] as? [[String: Any]] ?? []
         turns = rawMessages.compactMap { entry in
-            guard let content = Self.text(from: entry["content"]) else { return nil }
             let role = EngineTurn.Role(rawValue: entry["role"] as? String ?? "user") ?? .user
-            return EngineTurn(role: role, content: content)
+            let calls = Self.toolCalls(from: entry["tool_calls"])
+            // An assistant turn that only asked for tools carries no content, and a tool
+            // result can legitimately be an empty string — dropping either would erase a
+            // step of the agent loop, so only a contentless plain turn is skipped.
+            guard let content = Self.text(from: entry["content"])
+                ?? ((!calls.isEmpty || role == .tool) ? "" : nil)
+            else { return nil }
+            return EngineTurn(
+                role: role, content: content, toolCalls: calls,
+                toolCallID: entry["tool_call_id"] as? String,
+                toolName: entry["name"] as? String)
         }
         guard !turns.isEmpty else { return nil }
 
@@ -380,5 +422,23 @@ private struct ChatRequest {
         model = root["model"] as? String
         let kwargs = root["chat_template_kwargs"] as? [String: Any]
         thinking = kwargs?["enable_thinking"] as? Bool
+        // Passed to the chat template as sent. Rewriting the schema here would mean this app
+        // deciding how each model wants tools described, which is the template's job.
+        let declared = root["tools"] as? [[String: any Sendable]]
+        tools = (declared?.isEmpty ?? true) ? nil : declared
+    }
+
+    /// Tool calls from an assistant turn the client is replaying back to us.
+    private static func toolCalls(from raw: Any?) -> [EngineToolCall] {
+        guard let entries = raw as? [[String: Any]] else { return [] }
+        return entries.compactMap { entry in
+            guard let function = entry["function"] as? [String: Any],
+                let name = function["name"] as? String
+            else { return nil }
+            return EngineToolCall(
+                id: entry["id"] as? String ?? "call_\(UUID().uuidString.prefix(24))",
+                name: name,
+                argumentsJSON: function["arguments"] as? String ?? "{}")
+        }
     }
 }

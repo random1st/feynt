@@ -36,9 +36,9 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// The two catalog models plus the shared drafter, in the order the wizard downloads them.
+    /// The model plus its drafter, when it has one, in the order the wizard downloads them.
     func missingArtifacts(for spec: ModelSpec) -> [ModelSpec] {
-        [spec, spec.drafter].filter { !ModelResolver.isPresent($0) }
+        spec.artifacts.filter { !ModelResolver.isPresent($0) }
     }
 
     /// Switching stops the current model first, downloads what is missing, then loads the
@@ -71,14 +71,14 @@ final class AppState: ObservableObject {
         alert.messageText = "Re-download \(spec.title)?"
         alert.informativeText =
             "The weights and the drafter are deleted and fetched again — about "
-            + "\(Paths.formatBytes(spec.approximateBytes + spec.drafterApproximateBytes))."
+            + "\(Paths.formatBytes(spec.totalApproximateBytes))."
         alert.addButton(withTitle: "Re-download")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         Task {
             await engine.unload(spec)
-            for artifact in [spec, spec.drafter] {
+            for artifact in spec.artifacts {
                 if let location = ModelResolver.installedLocation(for: artifact) {
                     try? FileManager.default.removeItem(at: location)
                 }

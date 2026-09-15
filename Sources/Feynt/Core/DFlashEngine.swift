@@ -45,13 +45,18 @@ actor DFlashEngine: InferenceEngine {
         }
         await unload()
 
-        let loaded: ModelContext
+        var loaded: ModelContext
         do {
             loaded = try await loadModel(from: modelDirectory, using: #huggingFaceTokenizerLoader())
         } catch {
             throw EngineError.loadFailed(error.localizedDescription)
         }
-        AppLog.write("loaded target \(modelDirectory.lastPathComponent)")
+        // Same reason as in ``MLXEngine``: a directory load leaves the tool-call format
+        // unset, and the fallback engine adopts this very context.
+        loaded.configuration.toolCallFormat = ToolBridge.format(
+            for: loaded, directory: modelDirectory)
+        AppLog.write("loaded target \(modelDirectory.lastPathComponent)"
+            + ", tool calls: \(loaded.configuration.toolCallFormat?.rawValue ?? "none")")
 
         context = loaded
         stopTokens = Self.stopTokens(for: loaded)
@@ -138,17 +143,16 @@ actor DFlashEngine: InferenceEngine {
         // The DFlash loop accepts a draft when it matches the target's argmax; speculative
         // sampling is not implemented yet, so anything but greedy has to take the MLX path or
         // the requested temperature would be silently ignored.
-        guard let generator, options.temperature <= 0 else {
+        // Tool calls take the plain path too: the DFlash loop yields raw token ids and has no
+        // stream decoder to pull `<tool_call>` frames out of them, so speculating here would
+        // hand the client protocol text instead of calls. Correctness first; the speed is
+        // recoverable later by teaching the loop the same decoder.
+        let wantsTools = !(options.tools ?? []).isEmpty
+        guard let generator, options.temperature <= 0, !wantsTools else {
             return try await fallback.generate(turns: turns, options: options)
         }
 
-        let messages = turns.map { turn -> Chat.Message in
-            switch turn.role {
-            case .system: return .system(turn.content)
-            case .user: return .user(turn.content)
-            case .assistant: return .assistant(turn.content)
-            }
-        }
+        let messages = ToolBridge.messages(from: turns)
         // Qwen's chat template reads `enable_thinking`; off by default because with thinking
         // on the model can spend the whole budget reasoning and return an empty answer.
         let userInput = UserInput(
