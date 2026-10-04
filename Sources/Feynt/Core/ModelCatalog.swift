@@ -50,6 +50,11 @@ struct ModelSpec: Identifiable, Hashable {
     /// today has earned its drafter on the numbers.
     let drafterRepo: String?
     let drafterApproximateBytes: Int64
+    /// Quantise the drafter's linear layers to this many bits after loading, or `nil` to
+    /// run it as published. A property of the entry rather than a global switch, because
+    /// whether it pays depends on the target: it is measured per model, like the drafter
+    /// itself. The loader leaves the candidate selector alone at any setting.
+    var drafterQuantizationBits: Int? = nil
 
     var directoryName: String {
         repo.split(separator: "/").last.map(String.init) ?? repo
@@ -65,7 +70,8 @@ struct ModelSpec: Identifiable, Hashable {
             repo: drafterRepo,
             approximateBytes: drafterApproximateBytes,
             drafterRepo: drafterRepo,
-            drafterApproximateBytes: drafterApproximateBytes)
+            drafterApproximateBytes: drafterApproximateBytes,
+            drafterQuantizationBits: drafterQuantizationBits)
     }
 
     /// Everything this model needs on disk: itself, and the drafter if it has one.
@@ -104,16 +110,34 @@ enum ModelCatalog {
     /// Speculation used to buy only 1.1x here (86.2 -> 95 tok/s, 3.74 accepted per round),
     /// because the drafter was trained against the original weights and this is an
     /// abliterated variant of them. The kernel and chain-by-default work since then moved
-    /// it to 225-230 tok/s at 9.27 accepted per round - 2.1x - and the coding model above
-    /// is now the faster of the two.
+    /// it to 225-230 tok/s at 9.27 accepted per round - 2.1x.
+    ///
+    /// The pairing below is tuned for an agent, and that is a trade rather than a free win.
+    /// Measured on 2026-10-04, interleaved runs, spread under 1% within each configuration:
+    ///
+    ///                                   agent    short code   long ctx   prose
+    ///     z-lab DFlash 1, block 16      84.8     184.9        65.8       110.8  tok/s
+    ///     incoai DFlash 2 at 4 bits     97.8     201.7        73.5       100.2
+    ///
+    /// "agent" is 5.3k tokens of this repository's own source with a request to write code
+    /// against it - the shape an agent actually sends. DFlash 2 wins it by 15% and accepts
+    /// more per round there (3.22 against 3.07), and loses prose by 10%. Prose is what an
+    /// agent does not write.
+    ///
+    /// The four bits are measured too, not a precaution: bf16 drafts slightly better
+    /// (5.68 accepted against 5.42 on code) and still loses, because the round is bounded
+    /// by how many small kernels the drafter launches rather than by the bytes it reads.
+    /// Dropping seven eighths of those bytes bought 4-5%, which is what rules the byte
+    /// cost out as the thing to optimise here.
     static let uncensoredMoE = ModelSpec(
         id: "uncensored-moe",
         title: "Qwen3.6-35B-A3B Uncensored",
         subtitle: "MoE, uncensored, the fastest",
         repo: "froggeric/Qwen3.6-35B-A3B-Uncensored-Heretic-MLX-4bit",
         approximateBytes: 19_600_000_000,
-        drafterRepo: "z-lab/Qwen3.6-35B-A3B-DFlash",
-        drafterApproximateBytes: 771_800_000)
+        drafterRepo: "incoai/Qwen3.6-35B-A3B-DFlash2",
+        drafterApproximateBytes: 1_053_000_000,
+        drafterQuantizationBits: 4)
 
     /// The coding model.
     ///

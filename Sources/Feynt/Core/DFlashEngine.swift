@@ -39,7 +39,9 @@ actor DFlashEngine: InferenceEngine {
 
     // MARK: - Loading
 
-    func load(modelDirectory: URL, drafterDirectory: URL?) async throws {
+    func load(modelDirectory: URL, drafterDirectory: URL?, drafterQuantizationBits: Int?)
+        async throws
+    {
         guard ModelResolver.isInstalled(modelDirectory) else {
             throw EngineError.modelMissing(modelDirectory.path)
         }
@@ -64,7 +66,8 @@ actor DFlashEngine: InferenceEngine {
         // A snapshot is only valid for the model it was taken from.
         prefixCache = PrefixCache(slots: 4, byteLimit: 12 << 30)
         generator = Self.makeGenerator(
-            context: loaded, drafterDirectory: drafterDirectory, prefixCache: prefixCache)
+            context: loaded, drafterDirectory: drafterDirectory,
+            quantizeBits: drafterQuantizationBits, prefixCache: prefixCache)
     }
 
     /// How many tokens a round may draft. `nil` - the default - lets the generator grow
@@ -102,10 +105,21 @@ actor DFlashEngine: InferenceEngine {
         ProcessInfo.processInfo.environment["FEYNT_TREE"] == "1"
     }
 
+    /// Quantises the drafter's linear layers after loading. A measuring knob, like the two
+    /// above, and the one that decides an open question: on an A3B MoE the target reads
+    /// only ~2 GB of its 4-bit weights per token, so a bf16 drafter of 0.8-1.0 GB is
+    /// roughly half of what it is drafting for. On the dense 27B the same drafter is a
+    /// quarter. If that ratio is what sinks the better drafter here, four bits should
+    /// show it: the selector is left alone either way, the loader only takes linears.
+    private static func drafterBits(_ fromCatalog: Int?) -> Int? {
+        ProcessInfo.processInfo.environment["FEYNT_DRAFTER_BITS"].flatMap(Int.init) ?? fromCatalog
+    }
+
     /// Never fatal. Speculation is a speed feature, so an unsupported target or a broken
     /// drafter costs tokens per second and nothing else — the model still answers.
     private static func makeGenerator(
-        context: ModelContext, drafterDirectory: URL?, prefixCache: PrefixCache
+        context: ModelContext, drafterDirectory: URL?, quantizeBits: Int?,
+        prefixCache: PrefixCache
     ) -> DFlashSpeculativeGenerator? {
         guard let drafterDirectory else {
             AppLog.write("drafter skipped: none configured; speculation off")
@@ -125,7 +139,9 @@ actor DFlashEngine: InferenceEngine {
             return nil
         }
         do {
-            let drafter = try DFlashDraftModel.load(directory: drafterDirectory)
+            let bits = Self.drafterBits(quantizeBits)
+            let drafter = try DFlashDraftModel.load(
+                directory: drafterDirectory, quantizeBits: bits)
             let generator = DFlashSpeculativeGenerator(
                 target: target, drafter: drafter, maximumDraftTokens: Self.draftCap,
                 prefixCache: prefixCache, treeSpeculation: Self.treeSpeculation)
@@ -136,6 +152,7 @@ actor DFlashEngine: InferenceEngine {
                 "loaded drafter \(drafterDirectory.lastPathComponent), "
                     + "block \(drafter.configuration.blockSize), "
                     + "cap \(generator.cap)\(generator.adaptiveWidth ? " adaptive" : " pinned"), "
+                    + (bits.map { "drafter \($0)-bit, " } ?? "")
                     + "round \(generator.treeSpeculation ? "tree" : "chain")")
             return generator
         } catch {

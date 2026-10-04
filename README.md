@@ -73,6 +73,19 @@ call when nothing fits, and turns an empty tool result into a report instead of 
 the call. The two 27Bs share `incoai/Qwen3.8-27B-DFlash2`; Ornith brings its own drafter,
 trained against its own weights.
 
+`Qwen3.6-35B-A3B Uncensored` is paired for an agent rather than for a chat, and that is a
+trade with a measured price. Its drafter is `incoai/Qwen3.6-35B-A3B-DFlash2`, quantised to
+four bits when it loads. On 5.3k tokens of this repository's own source with a request to
+write code against it — the shape an agent actually sends — that pairing does 97-98 tok/s
+against 84-85 for the previous one, at 3.22 accepted per round against 3.07. It is 9%
+faster on short code and 12% on a long context, and **10% slower on prose**, which is the
+part of the trade worth knowing before pointing a chat at it.
+
+The four bits are measured too. The drafter drafts slightly better at bf16 — 5.68 accepted
+per round against 5.42 on code — and still loses, because a round here is bounded by how
+many small kernels the drafter launches rather than by the bytes it reads: dropping seven
+eighths of those bytes bought 4-5%.
+
 Dropped on the same rule: Qwen3-Coder-Next decodes at 59-61 tok/s and costs 42 GB with no
 DFlash 2 drafter in existence; LFM2.5-8B-A1B is fast (204-208) but loops on an empty tool
 result, which is where an agent actually lives; the 3.5 generation gained 1.0-1.4x on

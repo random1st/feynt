@@ -89,7 +89,8 @@ enum EngineError: LocalizedError {
 protocol InferenceEngine: AnyObject, Sendable {
     /// Load weights. `drafterDirectory` is optional: without a usable drafter the engine
     /// still generates, just without speculation.
-    func load(modelDirectory: URL, drafterDirectory: URL?) async throws
+    func load(modelDirectory: URL, drafterDirectory: URL?, drafterQuantizationBits: Int?)
+        async throws
 
     /// Release the weights and hand the memory back to the OS.
     func unload() async
