@@ -1,8 +1,8 @@
 # Feynt
 
 Local language models on Apple Silicon at 2.7x the speed of plain decoding: a small drafter
-model pulls a feint, proposing a block of eight tokens, and the large one confirms them in a
-single pass. Hence the name.
+model pulls a feint, proposing a whole block of tokens at once, and the large one confirms
+them in a single pass. Hence the name.
 
 The app lives in the menu bar. Inside it there is a chat, a first-run wizard and an
 OpenAI-compatible server. The engine runs **inside the app** through MLX Swift: no Python,
@@ -46,21 +46,37 @@ prefill is 28 times faster than cold, and the answer is identical to the charact
 
 ## Models
 
-Two of them, one generation, one drafter. A model gets listed only if speculation measurably
-speeds it up; every candidate was run against its own plain decode, warm, twice.
+Four of them. A model gets listed only if speculation measurably speeds it up; every
+candidate was run against its own plain decode, warm.
 
 | Model | Plain decode | With speculation | Speedup | Accepted per round |
 |---|---:|---:|---:|---:|
-| Qwen3.8-27B Uncensored | 14.6 | 40 | **2.7x** | 4.10 |
+| Ornith-1.5-35B-A3B | 104-108 | 257-261 | 2.4x | 11.55 |
+| Qwen3.6-35B-A3B Uncensored | 106-109 | 225-230 | 2.1x | 9.27 |
+| Qwen3.8-27B Uncensored | 14.6 | 40 | 2.7x | 4.10 |
 | Qwen3.8-27B | 18.6 | 35 | 1.9x | 3.77 |
 
-Tokens per second, M3 Max. Both models use `incoai/Qwen3.8-27B-DFlash2`, the only
-second-generation drafter that exists for a Qwen, the one with the candidate selector.
+Tokens per second, M3 Max. Those are short-prompt numbers, and a drafter only earns them
+when it can guess what comes next. Measured over 2.9k tokens of this repository's own
+source, the same two MoEs look different:
 
-The 3.5 generation failed the measurement: Qwen3.5-9B gained exactly nothing (57 against
-56), and the 3.5 MoE managed 1.1x. The 3.6 generation was dropped deliberately, to support
-one generation instead of three; it held the 35B-A3B MoE at 121 tok/s, the fastest thing
-measured here.
+| Model | Long context, prose | Long context, code |
+|---|---:|---:|
+| Ornith-1.5-35B-A3B | 70-73 (1.56 accepted) | 34-40 (2.15) |
+| Qwen3.6-35B-A3B Uncensored | 75-76 (2.18) | **51-52 (3.32)** |
+
+So **Ornith-1.5-35B-A3B is the one to point a coding agent at, but not because it is the
+fastest** — on a long context the 35B-A3B decodes faster. Ornith is here because it is
+trained for agentic coding, because it speaks the `xml_function` dialect the server parses,
+and because it behaves on tools: it calls with the argument taken from prose, declines to
+call when nothing fits, and turns an empty tool result into a report instead of repeating
+the call. The two 27Bs share `incoai/Qwen3.8-27B-DFlash2`; Ornith brings its own drafter,
+trained against its own weights.
+
+Dropped on the same rule: Qwen3-Coder-Next decodes at 59-61 tok/s and costs 42 GB with no
+DFlash 2 drafter in existence; LFM2.5-8B-A1B is fast (204-208) but loops on an empty tool
+result, which is where an agent actually lives; the 3.5 generation gained 1.0-1.4x on
+DFlash 1 drafters that have no candidate selector.
 
 Weights that are already on disk are found before the app offers to download anything.
 Models live in `~/Library/Application Support/Feynt/models`.
@@ -93,10 +109,16 @@ dependencies. Requests are served strictly one at a time, because the GPU is not
 | GET | `/health` | `ok` / `loading` / `no_model` / `error` |
 | GET | `/metrics` | requests, tokens, speed, accepted tokens per round |
 
-`messages`, `max_tokens`, `stream`, `temperature` and
+`messages`, `tools`, `max_tokens`, `stream`, `temperature` and
 `chat_template_kwargs.enable_thinking` are honoured; unknown fields are ignored. Message
 content may be a string or a list of typed parts. Reasoning arrives separately, in
 `reasoning_content`.
+
+Tool calls are OpenAI-shaped in both directions: `tools` go in, `tool_calls` come back on
+the assistant message, and a `tool` message carries the result of one. Each model speaks
+its own dialect - `xml_function` for the coding model, framed JSON for the 27Bs - and the
+dialect is resolved from the checkpoint after loading, so a client never sees protocol text
+in the answer.
 
 ```sh
 curl http://127.0.0.1:19234/v1/chat/completions \
@@ -108,7 +130,14 @@ The listener stays up when the idle timeout unloads the weights, and a completio
 loads them again on demand.
 
 Speculation runs under greedy decoding; a request with `temperature > 0` is served by the
-plain path without it.
+plain path without it. A request carrying `tools` used to take that plain path too, which
+cost it the prefix cache — the expensive half of an agent's turn, since every step re-sends
+the whole conversation. The speculative loop now decodes tool calls itself, so the same
+3187-token conversation re-sent costs 1.00s instead of 2.96s. The trade is that a block of
+16 drafted tokens does not pay for itself at the ~1.6 acceptance a tool-carrying prose
+request sees: sustained decode drops from 64-68 to 47-49 tok/s, so the change wins up to
+roughly 500 generated tokens per turn and draws level past that. An agent's turns are far
+shorter than that.
 
 ## Diagnosing a download
 

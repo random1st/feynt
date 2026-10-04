@@ -238,12 +238,16 @@ final class EngineController: ObservableObject {
 
     // MARK: - Presentation helpers
 
+    /// The app's own mark in the menu bar: an F in every state, so the glyph reads as Feynt
+    /// rather than as whatever symbol happened to fit the state. The state is still visible —
+    /// hollow while no weights are resident, filled once they are, and the one case worth
+    /// interrupting for keeps the warning triangle.
     var statusIcon: String {
         switch state {
-        case .unloaded: return "moon.zzz"
-        case .loading: return "hourglass"
-        case .ready: return "bolt.circle"
-        case .generating: return "waveform"
+        case .unloaded: return "f.square"
+        case .loading: return "f.square.fill"
+        case .ready: return "f.square.fill"
+        case .generating: return "f.square.fill"
         case .failed: return "exclamationmark.triangle"
         }
     }

@@ -42,11 +42,20 @@ private var probeTools: [[String: any Sendable]]? {
     let tools: [[String: any Sendable]]? =
         CommandLine.arguments.contains("--with-tools") ? probeTools : nil
 
+    // A model that reasons before answering spends the budget on thinking, so a fixed 200
+    // measures the reasoning rather than the reply. `--max-tokens` gives a run room.
+    let maxTokens =
+        CommandLine.arguments.firstIndex(of: "--max-tokens")
+        .flatMap { index -> Int? in
+            guard CommandLine.arguments.count > index + 1 else { return nil }
+            return Int(CommandLine.arguments[index + 1])
+        } ?? 200
+
     do {
         let stream = try await engine.generate(
             turns: [EngineTurn(role: .user, content: prompt)],
             options: GenerationOptions(
-                maxTokens: 200, temperature: 0, thinking: false, tools: tools))
+                maxTokens: maxTokens, temperature: 0, thinking: false, tools: tools))
         var text = "", reasoning = ""
         for await event in stream {
             switch event {
@@ -59,10 +68,15 @@ private var probeTools: [[String: any Sendable]]? {
                 print(String(reasoning.prefix(400)))
                 print("--- answer ---")
                 print(text)
+                // Accepted tokens per round is the number that decides whether a drafter
+                // earns its memory, so a measuring run has to print it rather than leave it
+                // to be inferred from the rate.
+                let accepted = stats.speculative
+                    ? String(format: " · %.2f accepted/round", stats.acceptedPerStep) : ""
                 print(String(
-                    format: "--- %d tokens · %.1f tok/s · prompt %d at %.1f tok/s ---",
+                    format: "--- %d tokens · %.1f tok/s · prompt %d at %.1f tok/s%@ ---",
                     stats.generatedTokens, stats.tokensPerSecond,
-                    stats.promptTokens, stats.promptTokensPerSecond))
+                    stats.promptTokens, stats.promptTokensPerSecond, accepted))
             }
         }
         exit(0)

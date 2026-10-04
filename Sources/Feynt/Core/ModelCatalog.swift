@@ -2,25 +2,41 @@ import Foundation
 
 /// A model the app offers, together with the drafter that makes it fast.
 ///
-/// Two entries, one generation, one drafter. The rule that got here was measured - a model
-/// stays only if speculation actually speeds it up - and everything that passed it was run
-/// against its own plain decode, warm, twice:
+/// The rule that got here was measured - a model stays only if speculation actually speeds
+/// it up - and everything that passed it was run against its own plain decode, warm.
 ///
-///     Qwen3.6-35B-A3B Uncens.  86.2 -> 95   tok/s   1.1x   3.74 accepted per round
-///     Qwen3.8-27B Uncensored   14.6 -> 40   tok/s   2.7x   4.10
-///     Qwen3.8-27B              18.6 -> 35   tok/s   1.9x   3.77
-///     ---------------------------------------------------- dropped
-///     Qwen3.6-27B              17.2 -> 41   tok/s   2.4x   4.86
-///     Qwen3.6-35B-A3B          73   -> 121  tok/s   1.7x   7.08
-///     Qwen3.5-27B              17.9 -> 26   tok/s   1.4x   4.12
-///     Qwen3.5-35B-A3B          74   -> 81   tok/s   1.1x   3.95
-///     Qwen3.5-9B               55.9 -> 57   tok/s   1.0x   3.10
+/// Acceptance, and so the rate, depends on what is being written. Both MoEs were measured
+/// on three workloads: a short templated coding prompt, an explanation over 2.9k tokens of
+/// this repository's own source, and code written against that same context.
+///
+///                              short        long prose     long + code
+///     Ornith-1.5-35B-A3B       257-261      70-73          34-40    tok/s
+///       accepted per round      11.55        1.56           2.15
+///     Qwen3.6-35B-A3B Uncens.  225-230      75-76          51-52    tok/s
+///       accepted per round       9.27        2.18           3.32
+///
+/// Read that honestly: Ornith is the faster of the two only where a drafter can guess what
+/// comes next. On the workload an agent actually runs - a long context and a short piece of
+/// code - the 35B-A3B is ahead. Ornith is listed as the coding model because it is trained
+/// for agentic coding and speaks a tool dialect the server parses, not because it is the
+/// fastest thing here in general.
+///
+///     Qwen3.8-27B Uncensored    14.6 ->  40 tok/s   2.7x   4.10 accepted per round
+///     Qwen3.8-27B               18.6 ->  35 tok/s   1.9x   3.77
+///     ------------------------------------------------------------------ dropped
+///     Qwen3-Coder-Next          59-61  (no DFlash 2 drafter exists, and 42 GB on disk)
+///     LFM2.5-8B-A1B            204-208 (fast, but loops on an empty tool result)
+///     Qwen3.6-27B               17.2   ->  41     tok/s   2.4x    4.86
+///     Qwen3.5-27B               17.9   ->  26     tok/s   1.4x    4.12
+///     Qwen3.5-9B                55.9   ->  57     tok/s   1.0x    3.10
+///
+/// The MoE rows were measured on 2026-09-21; the 27B rows predate the kernel and
+/// chain-by-default work and stand as they were taken.
 ///
 /// The 3.5 generation went on the measurement: DFlash 1 drafters, no candidate selector,
-/// and acceptance that says so. The 3.6 generation went on a product call - one supported
-/// generation instead of three - which costs the MoE, the fastest thing here at 121 tok/s.
-/// `incoai/Qwen3.8-27B-DFlash2` is the only DFlash 2 drafter that exists for a Qwen, and
-/// both remaining models share it.
+/// and acceptance that says so. A drafter has to be trained against the weights it drafts
+/// for, which is why the two 27Bs share `incoai/Qwen3.8-27B-DFlash2` and why the coding
+/// model brings its own.
 
 struct ModelSpec: Identifiable, Hashable {
     let id: String
@@ -29,7 +45,9 @@ struct ModelSpec: Identifiable, Hashable {
     let repo: String
     let approximateBytes: Int64
     /// Repo of the DFlash drafter trained against this target, when speculation pays for
-    /// itself here. `nil` is a measured decision, not a gap - see ``ModelCatalog/lfm``.
+    /// itself here. `nil` is a measured decision, not a gap: a model whose step is too
+    /// cheap to amortise a drafter runs faster without one, and every entry in the catalog
+    /// today has earned its drafter on the numbers.
     let drafterRepo: String?
     let drafterApproximateBytes: Int64
 
@@ -80,12 +98,14 @@ enum ModelCatalog {
         drafterRepo: dflash2_27B,
         drafterApproximateBytes: 3_700_000_000)
 
-    /// Roman's daily model, and the exception to the rule above: speculation buys only
-    /// 1.1x here (86.2 -> 95 tok/s, 3.74 accepted per round), because the drafter was
-    /// trained against the original weights and this is an abliterated variant of them.
-    /// It is listed anyway because it is the fastest model in this catalog by a wide
-    /// margin: a MoE reads ~3B of its 35B parameters per token, so even unaccelerated it
-    /// runs at twice what the dense 27B reaches with speculation.
+    /// Roman's daily model: a MoE that reads ~3B of its 35B parameters per token, so even
+    /// its plain decode (106-109 tok/s) beats what the dense 27B reaches with speculation.
+    ///
+    /// Speculation used to buy only 1.1x here (86.2 -> 95 tok/s, 3.74 accepted per round),
+    /// because the drafter was trained against the original weights and this is an
+    /// abliterated variant of them. The kernel and chain-by-default work since then moved
+    /// it to 225-230 tok/s at 9.27 accepted per round - 2.1x - and the coding model above
+    /// is now the faster of the two.
     static let uncensoredMoE = ModelSpec(
         id: "uncensored-moe",
         title: "Qwen3.6-35B-A3B Uncensored",
@@ -95,24 +115,35 @@ enum ModelCatalog {
         drafterRepo: "z-lab/Qwen3.6-35B-A3B-DFlash",
         drafterApproximateBytes: 771_800_000)
 
-    /// The only entry here with no drafter, and the fastest thing in the catalog.
+    /// The coding model.
     ///
-    /// A 32-expert MoE that activates ~1B parameters per token: on an M3 Max it decodes at
-    /// 204-208 tok/s against 110-119 for the 35B-A3B and 53-73 for the dense 27B (measured
-    /// 2026-09-14, 200 tokens, quiet machine). LiquidAI ships a drafter for it
-    /// (`LFM2.5-8B-A1B-DSpark`) and claims ~2.5x; here it is a net loss - 107-185 tok/s
-    /// against 204-208 plain - because a ~1B-active step is too cheap to amortise one.
-    /// So `drafterRepo` is nil on purpose, and `DFlashEngine` falls through to plain decode.
-    static let lfm = ModelSpec(
-        id: "lfm",
-        title: "LFM2.5-8B-A1B",
-        subtitle: "MoE, small and fastest",
-        repo: "LiquidAI/LFM2.5-8B-A1B-MLX-4bit",
-        approximateBytes: 4_800_000_000,
-        drafterRepo: nil,
-        drafterApproximateBytes: 0)
+    /// A 35B MoE that activates ~3B parameters per token, trained for agentic coding: its
+    /// own card has it ahead of Qwen3.6-35B-A3B across the coding and agentic benchmarks,
+    /// and it speaks the `xml_function` tool dialect, which the API server parses. On
+    /// tools it behaves the way an agent needs: it calls with the argument taken from
+    /// prose, it declines to call when nothing fits, and an empty tool result produces a
+    /// report rather than the same call again - which is where LFM2.5 failed.
+    ///
+    /// `jzinno/Ornith-1.5-35B-A3B-DFlash2` drafts a block of 16 and was trained against
+    /// these exact weights rather than a variant of them, which on a short templated prompt
+    /// lands 11.55 accepted per round - plain 104-108 -> 257-261 tok/s, 2.4x. That figure
+    /// is the ceiling, not the average: over a long context acceptance falls to 1.6-2.2 and
+    /// the 35B-A3B above is the faster model. See the table at the top of this file.
+    ///
+    /// The quantisation is the shipped one. `peculiar-ragdoll`'s Tiel-Coder is the same
+    /// model re-quantised with oMLX's oQ4e and fixes four more SWE-bench-Live problems, but
+    /// that checkpoint does not load here - MLX Swift rejects its weight structure - so the
+    /// entry stays on the build that runs.
+    static let ornith = ModelSpec(
+        id: "ornith",
+        title: "Ornith-1.5-35B-A3B",
+        subtitle: "MoE, coding, the fastest",
+        repo: "ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit",
+        approximateBytes: 19_500_000_000,
+        drafterRepo: "jzinno/Ornith-1.5-35B-A3B-DFlash2",
+        drafterApproximateBytes: 1_050_000_000)
 
-    static let all: [ModelSpec] = [lfm, uncensoredMoE, uncensored, stock]
+    static let all: [ModelSpec] = [ornith, uncensoredMoE, uncensored, stock]
 
     static func model(id: String) -> ModelSpec? {
         all.first { $0.id == id }

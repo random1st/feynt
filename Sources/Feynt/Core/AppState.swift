@@ -27,12 +27,21 @@ final class AppState: ObservableObject {
         self.api = api
         self.downloader = ModelDownloader()
         self.chat = ChatStore(engine: engine, settings: settings)
-        engine.lifecycle = api
         // Listening from launch, not from the first load: a client should be able to wake a
         // configured model by asking for a completion, the same way it wakes one after the
         // idle timeout has unloaded it.
-        if settings.wizardCompleted {
-            api.start()
+        // A headless run is a diagnostic, not a server: it must not take the port from
+        // the app the user is actually using, and it must not advertise itself in the log
+        // as a listener. `--generate` and `--download` exit on their own.
+        let headless = CommandLine.arguments.contains { $0 == "--generate" || $0 == "--download" }
+        if !headless {
+            // The lifecycle hook is what starts the listener on the first load, so a
+            // headless run must not be wired to it either - setting the flag alone left
+            // `--generate` announcing itself as a listener on someone else's port.
+            engine.lifecycle = api
+            if settings.wizardCompleted {
+                api.start()
+            }
         }
     }
 

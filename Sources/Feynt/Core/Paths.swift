@@ -69,7 +69,12 @@ enum AppLog {
         queue.async {
             Paths.ensureDirectory(Paths.logDirectory)
             let stamp = ISO8601DateFormatter().string(from: Date())
-            let line = "[\(stamp)] \(message)\n"
+            // The pid is in every line because the log file is shared by every Feynt
+            // process on the machine, and a headless `--generate` run writes the same
+            // "loaded target ..." lines as the menu-bar app. Without it a measuring run
+            // and the running server interleave indistinguishably, and reading the log
+            // tells you the wrong model was serving. It cost an afternoon once.
+            let line = "[\(stamp)] [\(ProcessInfo.processInfo.processIdentifier)] \(message)\n"
             guard let data = line.data(using: .utf8) else { return }
             let path = Paths.logFile
             if let handle = try? FileHandle(forWritingTo: path) {

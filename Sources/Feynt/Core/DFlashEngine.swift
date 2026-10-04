@@ -67,6 +67,41 @@ actor DFlashEngine: InferenceEngine {
             context: loaded, drafterDirectory: drafterDirectory, prefixCache: prefixCache)
     }
 
+    /// How many tokens a round may draft. `nil` - the default - lets the generator grow
+    /// the width itself and lets its own gate decide whether to draft at all.
+    ///
+    /// The width that pays depends on how long the context is, and no single number wins.
+    /// Measured on Ornith, alternating order, four runs each:
+    ///
+    ///                      3.2k of context        29-token prompt
+    ///     pinned to 7      78-84 tok/s  3.54      136-178 tok/s   6.26 accepted per round
+    ///     grown by itself  62-72        3.00      218-262        11.55
+    ///     pinned to 15     48-61        2.64
+    ///
+    /// One tile of the small-M kernel is eight rows, so a block wider than seven pays for
+    /// a second read of the weights per round. Over 3.2k tokens of context that second
+    /// read costs more than the extra drafts return, and narrowing the block is worth
+    /// about 20%. On a short prompt the same narrowing throws away half the acceptance
+    /// and costs about 35%. So the decision belongs to the context length, which neither
+    /// this cap nor the generator's gate - it watches acceptance only - currently reads.
+    /// Until that lands upstream the product keeps the generator's own behaviour.
+    ///
+    /// `FEYNT_DRAFT_CAP` pins a width for measuring. It exists because the obvious way to
+    /// get a plain baseline - remove the drafter - swaps this loop for the library's and
+    /// compares two implementations rather than two widths.
+    private static var draftCap: Int? {
+        ProcessInfo.processInfo.environment["FEYNT_DRAFT_CAP"].flatMap(Int.init)
+    }
+
+    /// Spends a round's verified rows on a tree of candidates instead of one chain.
+    /// Off in the library and off here; `FEYNT_TREE=1` turns it on for a measuring run.
+    /// It is a knob rather than a setting for the same reason the cap above is: the shape
+    /// that pays depends on the workload, and nothing has measured which way that goes on
+    /// this model yet.
+    private static var treeSpeculation: Bool {
+        ProcessInfo.processInfo.environment["FEYNT_TREE"] == "1"
+    }
+
     /// Never fatal. Speculation is a speed feature, so an unsupported target or a broken
     /// drafter costs tokens per second and nothing else — the model still answers.
     private static func makeGenerator(
@@ -92,13 +127,15 @@ actor DFlashEngine: InferenceEngine {
         do {
             let drafter = try DFlashDraftModel.load(directory: drafterDirectory)
             let generator = DFlashSpeculativeGenerator(
-                target: target, drafter: drafter, prefixCache: prefixCache)
+                target: target, drafter: drafter, maximumDraftTokens: Self.draftCap,
+                prefixCache: prefixCache, treeSpeculation: Self.treeSpeculation)
             // The round's shape decides how many target forwards a reply costs, so it
             // belongs in the log next to the block width rather than being inferred
             // from the tokens per second afterwards.
             AppLog.write(
                 "loaded drafter \(drafterDirectory.lastPathComponent), "
                     + "block \(drafter.configuration.blockSize), "
+                    + "cap \(generator.cap)\(generator.adaptiveWidth ? " adaptive" : " pinned"), "
                     + "round \(generator.treeSpeculation ? "tree" : "chain")")
             return generator
         } catch {
@@ -143,12 +180,7 @@ actor DFlashEngine: InferenceEngine {
         // The DFlash loop accepts a draft when it matches the target's argmax; speculative
         // sampling is not implemented yet, so anything but greedy has to take the MLX path or
         // the requested temperature would be silently ignored.
-        // Tool calls take the plain path too: the DFlash loop yields raw token ids and has no
-        // stream decoder to pull `<tool_call>` frames out of them, so speculating here would
-        // hand the client protocol text instead of calls. Correctness first; the speed is
-        // recoverable later by teaching the loop the same decoder.
-        let wantsTools = !(options.tools ?? []).isEmpty
-        guard let generator, options.temperature <= 0, !wantsTools else {
+        guard let generator, options.temperature <= 0 else {
             return try await fallback.generate(turns: turns, options: options)
         }
 
@@ -156,12 +188,29 @@ actor DFlashEngine: InferenceEngine {
         // Qwen's chat template reads `enable_thinking`; off by default because with thinking
         // on the model can spend the whole budget reasoning and return an empty answer.
         let userInput = UserInput(
-            chat: messages, additionalContext: ["enable_thinking": options.thinking])
+            chat: messages, tools: options.tools,
+            additionalContext: ["enable_thinking": options.thinking])
         let input = try await context.processor.prepare(input: userInput)
         let prompt = input.text.tokens.asArray(Int.self)
 
         let stops = stopTokens
         let tokenizer = context.tokenizer
+        // The loop yields raw token ids, so the tool-call syntax arrives here as ordinary
+        // text and has to be pulled back out - the same processor the MLX path gets from the
+        // library, in the dialect resolved at load time. Without it a request carrying tools
+        // fell through to plain decoding, which cost this path the prefix cache on exactly
+        // the requests an agent makes: the same 3187-token conversation re-sent took 2.96s
+        // every single time, against 5.26s cold and 1.00s warm now.
+        //
+        // The trade is real and worth naming. Speculation on a tool-carrying request lands
+        // around 1.6 accepted per round on prose, where a block of 16 does not pay for
+        // itself: sustained decode falls from 64-68 to 47-49 tok/s. Prefill dominates an
+        // agent's turn - a call is thirty tokens against three thousand of context - so
+        // skipping it wins up to roughly 500 generated tokens, and past that the two paths
+        // draw level. If a workload ever lives out there, the gate belongs on measured
+        // acceptance rather than on the presence of tools.
+        let toolFormat = context.configuration.toolCallFormat ?? .json
+        let tools = options.tools
         let raw = generator.stream(
             prompt: prompt, maximumTokens: options.maxTokens, stopTokens: stops)
 
@@ -171,6 +220,27 @@ actor DFlashEngine: InferenceEngine {
                 // Incremental decode: re-decoding the whole array per token is quadratic, and
                 // a token is often half a UTF-8 character, which a per-token `decode` mangles.
                 var detokenizer = NaiveStreamingDetokenizer(tokenizer: tokenizer)
+                let toolCalls = ToolCallProcessor(format: toolFormat, tools: tools)
+
+                /// Processor outputs as engine events, in the order the model emitted them:
+                /// response text still goes through the reasoning splitter, a parsed call is
+                /// handed over as a call, and a tool-call-shaped output that did not parse is
+                /// logged rather than leaked - as text it is protocol noise, as a call a lie.
+                func events(from outputs: [ToolCallProcessor.Output]) -> [EngineEvent] {
+                    var result: [EngineEvent] = []
+                    for output in outputs {
+                        switch output {
+                        case .response(let text):
+                            result.append(contentsOf: splitter.consume(text))
+                        case .toolCall(let call):
+                            result.append(.toolCall(ToolBridge.engineCall(from: call)))
+                        case .rejectedToolCall(let rejected):
+                            AppLog.write("rejected tool call: \(rejected)")
+                        }
+                    }
+                    return result
+                }
+
                 for await event in raw {
                     switch event {
                     case .token(let id):
@@ -178,9 +248,16 @@ actor DFlashEngine: InferenceEngine {
                         guard !stops.contains(id) else { continue }
                         detokenizer.append(token: id)
                         if let chunk = detokenizer.next() {
-                            for item in splitter.consume(chunk) { continuation.yield(item) }
+                            for item in events(from: toolCalls.processChunkOutputs(chunk)) {
+                                continuation.yield(item)
+                            }
                         }
                     case .finished(let statistics):
+                        // A call framed by EOS is only complete once the stream ends, so the
+                        // processor is drained before the splitter is.
+                        for item in events(from: toolCalls.processEOSOutputs()) {
+                            continuation.yield(item)
+                        }
                         for item in splitter.finish() { continuation.yield(item) }
                         continuation.yield(
                             .finished(Self.stats(from: statistics, promptTokens: prompt.count)))
