@@ -50,11 +50,6 @@ struct ModelSpec: Identifiable, Hashable {
     /// today has earned its drafter on the numbers.
     let drafterRepo: String?
     let drafterApproximateBytes: Int64
-    /// Quantise the drafter's linear layers to this many bits after loading, or `nil` to
-    /// run it as published. A property of the entry rather than a global switch, because
-    /// whether it pays depends on the target: it is measured per model, like the drafter
-    /// itself. The loader leaves the candidate selector alone at any setting.
-    var drafterQuantizationBits: Int? = nil
 
     var directoryName: String {
         repo.split(separator: "/").last.map(String.init) ?? repo
@@ -70,8 +65,7 @@ struct ModelSpec: Identifiable, Hashable {
             repo: drafterRepo,
             approximateBytes: drafterApproximateBytes,
             drafterRepo: drafterRepo,
-            drafterApproximateBytes: drafterApproximateBytes,
-            drafterQuantizationBits: drafterQuantizationBits)
+            drafterApproximateBytes: drafterApproximateBytes)
     }
 
     /// Everything this model needs on disk: itself, and the drafter if it has one.
@@ -124,11 +118,21 @@ enum ModelCatalog {
     /// more per round there (3.22 against 3.07), and loses prose by 10%. Prose is what an
     /// agent does not write.
     ///
-    /// The four bits are measured too, not a precaution: bf16 drafts slightly better
-    /// (5.68 accepted against 5.42 on code) and still loses, because the round is bounded
-    /// by how many small kernels the drafter launches rather than by the bytes it reads.
-    /// Dropping seven eighths of those bytes bought 4-5%, which is what rules the byte
-    /// cost out as the thing to optimise here.
+    /// The drafter runs as published. Quantising it was measured and dropped: four bits
+    /// beat bf16 on one agent prompt by 6% and lost to it on another by 5%, and a round of
+    /// the stand kept bf16 over four bits and then eight bits over bf16, each at P=1.00.
+    /// That is the signature of noise, not of a knob. What the experiment did settle is
+    /// that the round is not bound by the drafter's bytes: dropping seven eighths of them
+    /// bought 4-5%, so the cost is the small kernels the drafter launches, and the
+    /// selector is where they are.
+    ///
+    /// The width is the knob that matters here and it is not in this file. At cap 3 the
+    /// agent workload runs 117.7-118.9 tok/s against 86.6-88.4 at the default, +36%, while
+    /// short code falls from 221-229 to 154-157. The drafter accepts about three tokens
+    /// over a long context and drafts seven, so four verified rows a round are thrown
+    /// away; on a short templated prompt it accepts six and the same narrowing throws the
+    /// speedup away instead. Neither the cap nor the generator's gate reads the context
+    /// length, which is what would let both workloads have it.
     static let uncensoredMoE = ModelSpec(
         id: "uncensored-moe",
         title: "Qwen3.6-35B-A3B Uncensored",
@@ -136,8 +140,7 @@ enum ModelCatalog {
         repo: "froggeric/Qwen3.6-35B-A3B-Uncensored-Heretic-MLX-4bit",
         approximateBytes: 19_600_000_000,
         drafterRepo: "incoai/Qwen3.6-35B-A3B-DFlash2",
-        drafterApproximateBytes: 1_053_000_000,
-        drafterQuantizationBits: 4)
+        drafterApproximateBytes: 1_053_000_000)
 
     /// The coding model.
     ///

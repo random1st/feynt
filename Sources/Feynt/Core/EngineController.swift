@@ -95,9 +95,7 @@ final class EngineController: ObservableObject {
         let drafterDirectory = spec.drafter.flatMap(ModelResolver.installedLocation(for:))
         let engine = makeEngine()
         do {
-            try await engine.load(
-                modelDirectory: modelDirectory, drafterDirectory: drafterDirectory,
-                drafterQuantizationBits: spec.drafterQuantizationBits)
+            try await engine.load(modelDirectory: modelDirectory, drafterDirectory: drafterDirectory)
             let isSpeculative = await engine.isSpeculative
             residents[spec.id] = Resident(
                 spec: spec, engine: engine, speculative: isSpeculative, lastActivity: Date())

@@ -26,11 +26,7 @@ actor MLXEngine: InferenceEngine {
 
     // MARK: - Loading
 
-    /// The drafter and its quantisation are ignored here: this engine is the plain path,
-    /// and it exists precisely as the thing speculation is measured against.
-    func load(modelDirectory: URL, drafterDirectory: URL?, drafterQuantizationBits: Int?)
-        async throws
-    {
+    func load(modelDirectory: URL, drafterDirectory: URL?) async throws {
         guard ModelResolver.isInstalled(modelDirectory) else {
             throw EngineError.modelMissing(modelDirectory.path)
         }

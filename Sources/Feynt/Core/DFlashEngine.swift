@@ -39,9 +39,7 @@ actor DFlashEngine: InferenceEngine {
 
     // MARK: - Loading
 
-    func load(modelDirectory: URL, drafterDirectory: URL?, drafterQuantizationBits: Int?)
-        async throws
-    {
+    func load(modelDirectory: URL, drafterDirectory: URL?) async throws {
         guard ModelResolver.isInstalled(modelDirectory) else {
             throw EngineError.modelMissing(modelDirectory.path)
         }
@@ -66,8 +64,7 @@ actor DFlashEngine: InferenceEngine {
         // A snapshot is only valid for the model it was taken from.
         prefixCache = PrefixCache(slots: 4, byteLimit: 12 << 30)
         generator = Self.makeGenerator(
-            context: loaded, drafterDirectory: drafterDirectory,
-            quantizeBits: drafterQuantizationBits, prefixCache: prefixCache)
+            context: loaded, drafterDirectory: drafterDirectory, prefixCache: prefixCache)
     }
 
     /// How many tokens a round may draft. `nil` - the default - lets the generator grow
@@ -111,15 +108,22 @@ actor DFlashEngine: InferenceEngine {
     /// roughly half of what it is drafting for. On the dense 27B the same drafter is a
     /// quarter. If that ratio is what sinks the better drafter here, four bits should
     /// show it: the selector is left alone either way, the loader only takes linears.
-    private static func drafterBits(_ fromCatalog: Int?) -> Int? {
-        ProcessInfo.processInfo.environment["FEYNT_DRAFTER_BITS"].flatMap(Int.init) ?? fromCatalog
+    /// Quantises the drafter's linear layers after loading; the selector is left alone.
+    /// A measuring knob only — no catalog entry carries a quantisation, because measuring
+    /// one found a 6% win on one agent prompt and a 5% loss on another. What it did settle
+    /// is that the round is not bound by the drafter's bytes: cutting seven eighths of
+    /// them moved 4-5%.
+    private static var drafterBits: Int? {
+        guard let bits = ProcessInfo.processInfo.environment["FEYNT_DRAFTER_BITS"]
+            .flatMap(Int.init), bits > 0
+        else { return nil }
+        return bits
     }
 
     /// Never fatal. Speculation is a speed feature, so an unsupported target or a broken
     /// drafter costs tokens per second and nothing else — the model still answers.
     private static func makeGenerator(
-        context: ModelContext, drafterDirectory: URL?, quantizeBits: Int?,
-        prefixCache: PrefixCache
+        context: ModelContext, drafterDirectory: URL?, prefixCache: PrefixCache
     ) -> DFlashSpeculativeGenerator? {
         guard let drafterDirectory else {
             AppLog.write("drafter skipped: none configured; speculation off")
@@ -139,7 +143,7 @@ actor DFlashEngine: InferenceEngine {
             return nil
         }
         do {
-            let bits = Self.drafterBits(quantizeBits)
+            let bits = Self.drafterBits
             let drafter = try DFlashDraftModel.load(
                 directory: drafterDirectory, quantizeBits: bits)
             let generator = DFlashSpeculativeGenerator(
