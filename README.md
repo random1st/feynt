@@ -160,6 +160,35 @@ request sees: sustained decode drops from 64-68 to 47-49 tok/s, so the change wi
 roughly 500 generated tokens per turn and draws level past that. An agent's turns are far
 shorter than that.
 
+## MCP and A2A
+
+The same listener on `127.0.0.1:19234` speaks two agent protocols, so another agent can
+use the local model without being configured as an OpenAI client.
+
+**MCP** — `POST /mcp`, revision 2026-07-28, with the `initialize` handshake of earlier
+revisions answered too, since most hosts in use still open with it. Four tools:
+`list_models` (what is downloaded, loaded and active), `load_model`, `unload_model`, and
+`generate` (a prompt, an optional system prompt and model, an answer). Downloading is
+deliberately not a tool: a model is 16–20 GB, which is not something an agent should start
+without being asked.
+
+```sh
+claude mcp add --transport http feynt http://127.0.0.1:19234/mcp
+```
+
+**A2A** — agent card at `/.well-known/agent-card.json`, JSON-RPC at `POST /a2a`, protocol
+1.0: `SendMessage`, `SendStreamingMessage`, `GetTask`, `CancelTask`. Messages that share a
+`contextId` continue one conversation. `metadata.model` picks the model (`uncensored-moe`,
+`uncensored`, `stock`); without it the active one answers. `CancelTask` stops the
+generation itself — the next request is answered as on an idle machine — rather than only
+marking the task.
+
+Both are checked against their official clients: MCP with the Python SDK 2.3.0 over both
+the current and the handshake path, A2A with `a2a-sdk` 1.2.2 with and without streaming.
+Both refuse a request whose `Origin` is a website rather than this machine, which is what
+keeps a page in a browser from driving them through DNS rebinding. Generation on either
+waits its turn behind the OpenAI endpoint: there is one GPU.
+
 ## Diagnosing a download
 
 ```sh

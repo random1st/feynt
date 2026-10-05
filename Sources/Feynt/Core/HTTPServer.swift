@@ -67,8 +67,11 @@ final class HTTPResponder {
     private static func reason(_ status: Int) -> String {
         switch status {
         case 200: return "OK"
+        case 202: return "Accepted"
         case 400: return "Bad Request"
+        case 403: return "Forbidden"
         case 404: return "Not Found"
+        case 405: return "Method Not Allowed"
         case 503: return "Service Unavailable"
         default: return "Error"
         }

@@ -62,9 +62,13 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
     @Published private(set) var lastError: String?
 
     private var http: HTTPServer?
-    private let gate = GenerationGate()
-    private unowned let engine: EngineController
-    private let settings: AppSettings
+    // Internal rather than private: the MCP and A2A endpoints live in their own files and
+    // generate through the same gate, engine and settings as the OpenAI route.
+    let gate = GenerationGate()
+    /// Tasks and conversations of the A2A endpoint; see `A2AEndpoint.swift`.
+    let a2a = A2ARegistry()
+    unowned let engine: EngineController
+    let settings: AppSettings
 
     init(engine: EngineController, settings: AppSettings) {
         self.engine = engine
@@ -125,6 +129,17 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
             responder.sendJSON(status: 200, object: modelsPayload())
         case ("POST", "/v1/chat/completions"):
             handleCompletion(request, responder)
+        case ("POST", "/mcp"):
+            handleMCP(request, responder)
+        case ("GET", "/mcp"), ("DELETE", "/mcp"):
+            // MCP 2026-07-28 removed the standalone GET stream and protocol sessions; a
+            // client from an earlier revision probing for either gets the answer the spec
+            // asks for rather than a generic 404.
+            responder.send(status: 405, contentType: "text/plain", body: Data())
+        case ("GET", "/.well-known/agent-card.json"):
+            responder.sendJSON(status: 200, object: agentCard())
+        case ("POST", "/a2a"):
+            handleA2A(request, responder)
         case ("OPTIONS", _):
             responder.send(status: 200, contentType: "text/plain", body: Data())
         default:
@@ -225,7 +240,7 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
     /// Clients like pi name a model. With more than one resident the name decides which
     /// one answers, and an unknown name is an error rather than silently the current one:
     /// a typo would otherwise run on the wrong weights and nobody would know.
-    private func resolveModel(_ name: String?) -> ModelSpec? {
+    func resolveModel(_ name: String?) -> ModelSpec? {
         guard let name, !name.isEmpty, name != "local" else { return settings.selectedModel }
         let wanted = name.lowercased()
         return ModelCatalog.all.first { spec in
