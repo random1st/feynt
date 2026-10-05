@@ -83,9 +83,11 @@ part of the trade worth knowing before pointing a chat at it.
 
 The drafter runs as published. Quantising it looked like a win and was dropped: four bits
 beat bf16 by 6% on one agent prompt and lost to it by 5% on another, which is noise wearing
-a verdict. The experiment did settle something else — cutting seven eighths of the
-drafter's bytes moved 4-5%, so a round is not bound by what the drafter reads but by the
-small kernels it launches.
+a verdict. The experiment did settle something else — four bits leave a quarter of the
+drafter's bytes, and dropping the other three quarters produced no consistent gain either
+way, so a round is not bound by what the drafter reads. What it *is* bound by is not
+settled: that needs the round split into drafting, selecting and verifying, and nothing
+here measures that yet.
 
 The knob that does move this workload is the draft width, and it is not in the catalog yet.
 Pinned at three, the agent workload runs **117.7-118.9 tok/s against 86.6-88.4** at the

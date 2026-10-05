@@ -77,6 +77,28 @@ private var probeTools: [[String: any Sendable]]? {
                     format: "--- %d tokens · %.1f tok/s · prompt %d at %.1f tok/s%@ ---",
                     stats.generatedTokens, stats.tokensPerSecond,
                     stats.promptTokens, stats.promptTokensPerSecond, accepted))
+                // What a round is spent on. Speculation here pays only from about 1.9
+                // accepted drafts, because the round costs several plain forwards - so
+                // the split between drafting and verifying is the number that decides
+                // where to spend effort, and it was not observable before.
+                if stats.speculative && stats.roundCount > 0 {
+                    let round = stats.draftSeconds + stats.verifySeconds
+                        + stats.rollbackSeconds
+                    let plainStep = stats.plainTokens > 0
+                        ? stats.plainSeconds / Double(stats.plainTokens) : 0
+                    let inForwards = plainStep > 0
+                        ? String(format: ", round %.2f plain forwards",
+                                 round / Double(stats.roundCount) / plainStep)
+                        : ", no plain steps to compare against"
+                    print(String(
+                        format: "--- %d rounds · draft %.2fs (%.0f%%) · verify %.2fs (%.0f%%)"
+                            + " · rollback %.2fs (%.0f%%)%@ ---",
+                        stats.roundCount,
+                        stats.draftSeconds, 100 * stats.draftSeconds / round,
+                        stats.verifySeconds, 100 * stats.verifySeconds / round,
+                        stats.rollbackSeconds, 100 * stats.rollbackSeconds / round,
+                        inForwards))
+                }
             }
         }
         exit(0)

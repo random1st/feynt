@@ -314,6 +314,12 @@ actor DFlashEngine: InferenceEngine {
         stats.acceptedPerStep = statistics.meanAcceptedPerRound
         stats.cachedPromptTokens = statistics.reusedPromptTokens
         stats.speculative = true
+        stats.draftSeconds = statistics.draftSeconds
+        stats.verifySeconds = statistics.verifySeconds
+        stats.rollbackSeconds = statistics.rollbackSeconds
+        stats.plainSeconds = statistics.plainSeconds
+        stats.plainTokens = statistics.plainTokens
+        stats.roundCount = statistics.roundCount
         return stats
     }
 }

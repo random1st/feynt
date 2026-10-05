@@ -122,9 +122,11 @@ enum ModelCatalog {
     /// beat bf16 on one agent prompt by 6% and lost to it on another by 5%, and a round of
     /// the stand kept bf16 over four bits and then eight bits over bf16, each at P=1.00.
     /// That is the signature of noise, not of a knob. What the experiment did settle is
-    /// that the round is not bound by the drafter's bytes: dropping seven eighths of them
-    /// bought 4-5%, so the cost is the small kernels the drafter launches, and the
-    /// selector is where they are.
+    /// that the round is not bound by the drafter's bytes: four bits leave a quarter of
+    /// them, and dropping the other three quarters produced no consistent gain in either
+    /// direction. What that rules out is the drafter's weight traffic. It does not
+    /// establish what the cost *is* - that needs a per-round decomposition, which nothing
+    /// here measures yet.
     ///
     /// The width is the knob that matters here and it is not in this file. At cap 3 the
     /// agent workload runs 117.7-118.9 tok/s against 86.6-88.4 at the default, +36%, while

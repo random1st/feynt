@@ -47,6 +47,18 @@ struct GenerationStats: Sendable, Equatable {
     /// Prompt tokens served from the prefix cache instead of being prefilled.
     var cachedPromptTokens: Int = 0
     var speculative: Bool = false
+
+    /// Wall time inside a speculative round, split by phase. Carried out of the loop
+    /// because a round's cost is the thing that decides whether speculation pays here,
+    /// and until this was surfaced every claim about it was arithmetic on comments.
+    var draftSeconds: Double = 0
+    var verifySeconds: Double = 0
+    var rollbackSeconds: Double = 0
+    /// Time and tokens spent with drafting switched off by the gate — the plain decode
+    /// baseline, measured by the same loop rather than by a second implementation.
+    var plainSeconds: Double = 0
+    var plainTokens: Int = 0
+    var roundCount: Int = 0
 }
 
 /// Per-request knobs. A struct rather than loose parameters so the API server can honour
