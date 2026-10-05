@@ -1,3 +1,4 @@
+import DFlashKit
 import Foundation
 
 /// One headless turn through the real engine stack, behind `Feynt --generate <id> [prompt]`.
@@ -90,6 +91,25 @@ private var probeTools: [[String: any Sendable]]? {
                         ? String(format: ", round %.2f plain forwards",
                                  round / Double(stats.roundCount) / plainStep)
                         : ", no plain steps to compare against"
+                    // `DFLASH_PROFILE=1` splits the drafter's own pass. It forces the
+                    // graph between phases, so the total inflates - read the shares, not
+                    // the seconds.
+                    if DFlashDraftModel.profiling {
+                        let p = DFlashDraftModel.profile
+                        let sum = p.backboneSeconds + p.headSeconds + p.topKSeconds
+                            + p.selectorSeconds + p.walkSeconds
+                        if sum > 0 {
+                            print(String(
+                                format: "--- draft pass over %d calls: backbone %.0f%% ·"
+                                    + " head %.0f%% · top-k %.0f%% · selector %.0f%% ·"
+                                    + " walk %.0f%% (%.1f ms per call) ---",
+                                p.calls,
+                                100 * p.backboneSeconds / sum, 100 * p.headSeconds / sum,
+                                100 * p.topKSeconds / sum, 100 * p.selectorSeconds / sum,
+                                100 * p.walkSeconds / sum,
+                                1000 * sum / Double(max(p.calls, 1))))
+                        }
+                    }
                     print(String(
                         format: "--- %d rounds · draft %.2fs (%.0f%%) · verify %.2fs (%.0f%%)"
                             + " · rollback %.2fs (%.0f%%)%@ ---",
