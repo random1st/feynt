@@ -28,6 +28,22 @@ echo "== version $VERSION"
 
 FEYNT_SIGN_IDENTITY="$IDENTITY" "$ROOT/package-app.sh" release
 
+# Debug symbols, kept beside the DMG and never shipped in it.
+#
+# A release binary is stripped and Xcode's DerivedData is overwritten by the next
+# build, so a crash report from a released version is a list of offsets nobody can
+# resolve. That is not hypothetical: 0.7.0 segfaulted in the generation thread on
+# 2026-10-04 and the frames could not be named, because by then the only matching
+# dSYM had been rebuilt away. Keeping it costs a copy.
+DSYM="$ROOT/.build/xcode/Build/Products/Release/Feynt.dSYM"
+if [ -d "$DSYM" ]; then
+    rm -rf "$ROOT/build/Feynt-$VERSION.dSYM"
+    cp -R "$DSYM" "$ROOT/build/Feynt-$VERSION.dSYM"
+    echo "== symbols kept: build/Feynt-$VERSION.dSYM"
+else
+    echo "WARNING: no dSYM at $DSYM - a crash in $VERSION will not be symbolicatable" >&2
+fi
+
 # Приложение получает свой билет ДО того, как попадёт в DMG.
 echo "== app ticket"
 ZIP="$ROOT/build/Feynt-app.zip"

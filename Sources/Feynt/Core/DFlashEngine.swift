@@ -144,6 +144,17 @@ actor DFlashEngine: InferenceEngine {
         }
         do {
             let bits = Self.drafterBits
+            // MLX reports a bad tensor shape or an impossible quantisation by calling its
+            // error handler, and the default handler ends the process - which is how a
+            // measuring knob set to zero bits turned into a SIGTRAP in the released app
+            // on 2026-10-04. `withError` turns that into a Swift error, which the `catch`
+            // below already knows how to answer: speculation off, the model still replies.
+            // Not wrapped in `withError`, and that was tried: MLX raises an impossible
+            // quantisation from its own thread, where a scoped handler is not installed,
+            // so the process still ended on SIGTRAP (exit 133) with the load and a forced
+            // `eval` both inside the scope. Catching this class needs a handler installed
+            // globally at launch, not a scope here. Until then a bad drafter can still end
+            // the app - which is what the released 0.7.0 did on 2026-10-04.
             let drafter = try DFlashDraftModel.load(
                 directory: drafterDirectory, quantizeBits: bits)
             let generator = DFlashSpeculativeGenerator(
