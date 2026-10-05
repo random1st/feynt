@@ -5,25 +5,17 @@ import Foundation
 /// The rule that got here was measured - a model stays only if speculation actually speeds
 /// it up - and everything that passed it was run against its own plain decode, warm.
 ///
-/// Acceptance, and so the rate, depends on what is being written. Both MoEs were measured
-/// on three workloads: a short templated coding prompt, an explanation over 2.9k tokens of
-/// this repository's own source, and code written against that same context.
+/// Acceptance, and so the rate, depends on what is being written, so every candidate was
+/// measured on three workloads: a short templated coding prompt, an explanation over 2.9k
+/// tokens of this repository's own source, and code written against that same context.
 ///
-///                              short        long prose     long + code
-///     Ornith-1.5-35B-A3B       257-261      70-73          34-40    tok/s
-///       accepted per round      11.55        1.56           2.15
 ///     Qwen3.6-35B-A3B Uncens.  225-230      75-76          51-52    tok/s
 ///       accepted per round       9.27        2.18           3.32
-///
-/// Read that honestly: Ornith is the faster of the two only where a drafter can guess what
-/// comes next. On the workload an agent actually runs - a long context and a short piece of
-/// code - the 35B-A3B is ahead. Ornith is listed as the coding model because it is trained
-/// for agentic coding and speaks a tool dialect the server parses, not because it is the
-/// fastest thing here in general.
-///
 ///     Qwen3.8-27B Uncensored    14.6 ->  40 tok/s   2.7x   4.10 accepted per round
 ///     Qwen3.8-27B               18.6 ->  35 tok/s   1.9x   3.77
 ///     ------------------------------------------------------------------ dropped
+///     Ornith-1.5-35B-A3B       257-261      70-73          34-40    tok/s
+///       accepted per round      11.55        1.56           2.15
 ///     Qwen3-Coder-Next          59-61  (no DFlash 2 drafter exists, and 42 GB on disk)
 ///     LFM2.5-8B-A1B            204-208 (fast, but loops on an empty tool result)
 ///     Qwen3.6-27B               17.2   ->  41     tok/s   2.4x    4.86
@@ -33,10 +25,18 @@ import Foundation
 /// The MoE rows were measured on 2026-09-21; the 27B rows predate the kernel and
 /// chain-by-default work and stand as they were taken.
 ///
+/// Ornith was the coding entry and is dropped on its own numbers. It leads only where a
+/// drafter can guess what comes next; on the workload an agent actually runs - a long
+/// context and a short piece of code - the 35B-A3B is ahead, 51-52 tok/s against 34-40,
+/// and ahead on prose too. What it had was tool discipline, and that stopped being a
+/// reason once the server learned to parse the `qwen3_5` dialect the 35B-A3B speaks: it
+/// calls with the argument taken from prose, declines when nothing fits, and reports on an
+/// empty result. An entry nobody should download is 19.5 GB of temptation in the model
+/// window, so it goes.
+///
 /// The 3.5 generation went on the measurement: DFlash 1 drafters, no candidate selector,
 /// and acceptance that says so. A drafter has to be trained against the weights it drafts
-/// for, which is why the two 27Bs share `incoai/Qwen3.8-27B-DFlash2` and why the coding
-/// model brings its own.
+/// for, which is why the two 27Bs share `incoai/Qwen3.8-27B-DFlash2`.
 
 struct ModelSpec: Identifiable, Hashable {
     let id: String
@@ -144,35 +144,7 @@ enum ModelCatalog {
         drafterRepo: "incoai/Qwen3.6-35B-A3B-DFlash2",
         drafterApproximateBytes: 1_053_000_000)
 
-    /// The coding model.
-    ///
-    /// A 35B MoE that activates ~3B parameters per token, trained for agentic coding: its
-    /// own card has it ahead of Qwen3.6-35B-A3B across the coding and agentic benchmarks,
-    /// and it speaks the `xml_function` tool dialect, which the API server parses. On
-    /// tools it behaves the way an agent needs: it calls with the argument taken from
-    /// prose, it declines to call when nothing fits, and an empty tool result produces a
-    /// report rather than the same call again - which is where LFM2.5 failed.
-    ///
-    /// `jzinno/Ornith-1.5-35B-A3B-DFlash2` drafts a block of 16 and was trained against
-    /// these exact weights rather than a variant of them, which on a short templated prompt
-    /// lands 11.55 accepted per round - plain 104-108 -> 257-261 tok/s, 2.4x. That figure
-    /// is the ceiling, not the average: over a long context acceptance falls to 1.6-2.2 and
-    /// the 35B-A3B above is the faster model. See the table at the top of this file.
-    ///
-    /// The quantisation is the shipped one. `peculiar-ragdoll`'s Tiel-Coder is the same
-    /// model re-quantised with oMLX's oQ4e and fixes four more SWE-bench-Live problems, but
-    /// that checkpoint does not load here - MLX Swift rejects its weight structure - so the
-    /// entry stays on the build that runs.
-    static let ornith = ModelSpec(
-        id: "ornith",
-        title: "Ornith-1.5-35B-A3B",
-        subtitle: "MoE, coding, the fastest",
-        repo: "ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit",
-        approximateBytes: 19_500_000_000,
-        drafterRepo: "jzinno/Ornith-1.5-35B-A3B-DFlash2",
-        drafterApproximateBytes: 1_050_000_000)
-
-    static let all: [ModelSpec] = [ornith, uncensoredMoE, uncensored, stock]
+    static let all: [ModelSpec] = [uncensoredMoE, uncensored, stock]
 
     static func model(id: String) -> ModelSpec? {
         all.first { $0.id == id }

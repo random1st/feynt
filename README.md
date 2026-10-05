@@ -51,7 +51,6 @@ candidate was run against its own plain decode, warm.
 
 | Model | Plain decode | With speculation | Speedup | Accepted per round |
 |---|---:|---:|---:|---:|
-| Ornith-1.5-35B-A3B | 104-108 | 257-261 | 2.4x | 11.55 |
 | Qwen3.6-35B-A3B Uncensored | 106-109 | 225-230 | 2.1x | 9.27 |
 | Qwen3.8-27B Uncensored | 14.6 | 40 | 2.7x | 4.10 |
 | Qwen3.8-27B | 18.6 | 35 | 1.9x | 3.77 |
@@ -62,16 +61,10 @@ source, the same two MoEs look different:
 
 | Model | Long context, prose | Long context, code |
 |---|---:|---:|
-| Ornith-1.5-35B-A3B | 70-73 (1.56 accepted) | 34-40 (2.15) |
 | Qwen3.6-35B-A3B Uncensored | 75-76 (2.18) | **51-52 (3.32)** |
 
-So **Ornith-1.5-35B-A3B is the one to point a coding agent at, but not because it is the
-fastest** — on a long context the 35B-A3B decodes faster. Ornith is here because it is
-trained for agentic coding, because it speaks the `xml_function` dialect the server parses,
-and because it behaves on tools: it calls with the argument taken from prose, declines to
-call when nothing fits, and turns an empty tool result into a report instead of repeating
-the call. The two 27Bs share `incoai/Qwen3.8-27B-DFlash2`; Ornith brings its own drafter,
-trained against its own weights.
+So **point a coding agent at `Qwen3.6-35B-A3B Uncensored`**. The two 27Bs share
+`incoai/Qwen3.8-27B-DFlash2`.
 
 `Qwen3.6-35B-A3B Uncensored` is paired for an agent rather than for a chat, and that is a
 trade with a measured price. Its drafter is `incoai/Qwen3.6-35B-A3B-DFlash2`, quantised to
@@ -97,8 +90,12 @@ are thrown away; on a short templated prompt it accepts six and the same narrowi
 the speedup away instead. Nothing in the loop reads the context length, which is what would
 let both workloads have it.
 
-Dropped on the same rule: Qwen3-Coder-Next decodes at 59-61 tok/s and costs 42 GB with no
-DFlash 2 drafter in existence; LFM2.5-8B-A1B is fast (204-208) but loops on an empty tool
+Dropped on the same rule: Ornith-1.5-35B-A3B leads on a short templated prompt (257-261
+against 225-230) and loses where an agent actually works — 34-40 against 51-52 on a long
+context with code, and 70-73 against 75-76 on prose. It was listed for its tool discipline,
+which stopped being a reason once the server learned the dialect the 35B-A3B speaks; an
+entry nobody should download is 19.5 GB of temptation. Qwen3-Coder-Next decodes at 59-61
+tok/s and costs 42 GB with no DFlash 2 drafter in existence; LFM2.5-8B-A1B is fast (204-208) but loops on an empty tool
 result, which is where an agent actually lives; the 3.5 generation gained 1.0-1.4x on
 DFlash 1 drafters that have no candidate selector.
 
