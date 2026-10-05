@@ -327,6 +327,13 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
                         "prompt_tokens": stats.promptTokens,
                         "completion_tokens": stats.generatedTokens,
                         "total_tokens": stats.promptTokens + stats.generatedTokens,
+                        // What the prefix cache served instead of prefilling. OpenAI's
+                        // field, and the only way a client can tell a cheap turn from an
+                        // expensive one: on this machine a 5.3k-token prompt costs 3.5s to
+                        // prefill and nothing at all when it hits. An agent re-sends its
+                        // whole conversation every step, so this is the number that says
+                        // whether that is free.
+                        "prompt_tokens_details": ["cached_tokens": stats.cachedPromptTokens],
                     ],
                 ])
         }
