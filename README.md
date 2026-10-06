@@ -11,11 +11,14 @@ no child process, nothing to install beforehand.
 ## Install
 
 ```sh
-brew install --cask random1st/feynt/feynt
+brew tap random1st/feynt https://github.com/random1st/feynt
+brew install --cask feynt
 ```
 
-The full name taps the repository itself. If Homebrew asks you to trust it first, run
-`brew trust random1st/feynt` and repeat.
+The URL in the first line is not optional. Given only `random1st/feynt`, Homebrew looks for
+a repository named `homebrew-feynt`, which does not exist: the cask lives in this
+repository, in `Casks/feynt.rb`, and is updated with every release. If Homebrew asks you to
+trust the tap first, run `brew trust random1st/feynt` and repeat.
 
 The app is signed with a Developer ID and notarised by Apple, and both the app and the DMG
 carry their own ticket, so the first launch needs no network round trip and no manual
