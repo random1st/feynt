@@ -20,13 +20,19 @@ Homebrew reads `random1st/feynt` as the repository `random1st/homebrew-feynt`. T
 a GitHub redirect to this repository, so the cask lives in one place — `Casks/feynt.rb`
 here, updated with every release — and the short command still works.
 
-Installed before 0.8.1 and Homebrew now says `Cask 'feynt' is unreadable`? Your tap is a
-clone of the old, separate tap repository, and the update collided with this one's history.
-Reset it once:
+Installed before 0.8.1, and Homebrew says `Cask 'feynt' is unreadable … syntax errors
+found`, or never offers a new version? Your tap is a clone of the old, separate tap
+repository. `brew update` tried to rebase that history onto this one, stopped on a conflict
+and left the rebase half done, so every later update fails without saying so. Abandon the
+rebase and reset the tap once:
 
 ```sh
-brew update-reset "$(brew --repo random1st/feynt)"
+cd "$(brew --repo random1st/feynt)"
+git rebase --abort; git fetch origin && git reset --hard origin/main
+brew upgrade --cask feynt
 ```
+
+`brew update-reset` alone does not get out of this state while the rebase is still open.
 
 The app is signed with a Developer ID and notarised by Apple, and both the app and the DMG
 carry their own ticket, so the first launch needs no network round trip and no manual
