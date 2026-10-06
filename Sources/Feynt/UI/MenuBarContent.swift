@@ -14,10 +14,16 @@ struct MenuBarContent: View {
     @ObservedObject var engine: EngineController
     @ObservedObject var settings: AppSettings
     @ObservedObject var api: APIServer
+    @ObservedObject var updates: UpdateChecker
     @Environment(\.openWindow) private var openWindow
     @EnvironmentObject private var state: AppState
 
     var body: some View {
+        if let update = updates.available {
+            Button("Update available: Feynt \(update.version)…") { updates.openReleasePage() }
+            Divider()
+        }
+
         Text("\(settings.selectedModel.title) — \(engine.statusText)")
 
         Text(engine.speculative ? "Mode: speculative decoding" : "Mode: plain decoding")
@@ -132,6 +138,13 @@ struct MenuBarContent: View {
                 }
             }
         }
+
+        Divider()
+
+        Button("Check for Updates…") {
+            Task { await updates.check(userInitiated: true) }
+        }
+        Toggle("Check for updates automatically", isOn: $settings.checkForUpdates)
 
         Divider()
 

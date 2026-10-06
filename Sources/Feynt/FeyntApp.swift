@@ -24,7 +24,9 @@ struct FeyntApp: App {
 
 
         MenuBarExtra {
-            MenuBarContent(engine: state.engine, settings: state.settings, api: state.api)
+            MenuBarContent(
+                engine: state.engine, settings: state.settings, api: state.api,
+                updates: state.updates)
                 .environmentObject(state)
                 .task {
                     // The menu-bar scene is alive from launch, unlike the window, so this is

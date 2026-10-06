@@ -22,6 +22,10 @@ final class AppSettings: ObservableObject {
     @Published var wizardCompleted: Bool {
         didSet { defaults.set(wizardCompleted, forKey: "wizardCompleted") }
     }
+    /// On by default: an app that never says it is out of date stays out of date.
+    @Published var checkForUpdates: Bool {
+        didSet { defaults.set(checkForUpdates, forKey: "checkForUpdates") }
+    }
 
     init() {
         port = (defaults.object(forKey: "port") as? Int) ?? 19234
@@ -30,6 +34,7 @@ final class AppSettings: ObservableObject {
         maxTokens = (defaults.object(forKey: "maxTokens") as? Int) ?? 4096
         selectedModelID = defaults.string(forKey: "selectedModelID") ?? ModelCatalog.uncensored.id
         wizardCompleted = defaults.bool(forKey: "wizardCompleted")
+        checkForUpdates = (defaults.object(forKey: "checkForUpdates") as? Bool) ?? true
     }
 
     var selectedModel: ModelSpec {

@@ -13,6 +13,7 @@ final class AppState: ObservableObject {
     let downloader: ModelDownloader
     let chat: ChatStore
     let api: APIServer
+    let updates: UpdateChecker
 
     private init() {
         let settings = AppSettings()
@@ -27,6 +28,7 @@ final class AppState: ObservableObject {
         self.api = api
         self.downloader = ModelDownloader()
         self.chat = ChatStore(engine: engine, settings: settings)
+        self.updates = UpdateChecker(settings: settings)
         // Listening from launch, not from the first load: a client should be able to wake a
         // configured model by asking for a completion, the same way it wakes one after the
         // idle timeout has unloaded it.
@@ -35,6 +37,8 @@ final class AppState: ObservableObject {
         // as a listener. `--generate` and `--download` exit on their own.
         let headless = CommandLine.arguments.contains { $0 == "--generate" || $0 == "--download" }
         if !headless {
+            // A diagnostic run exits in seconds and must not ask GitHub anything.
+            updates.start()
             // The lifecycle hook is what starts the listener on the first load, so a
             // headless run must not be wired to it either - setting the flag alone left
             // `--generate` announcing itself as a listener on someone else's port.

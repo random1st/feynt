@@ -118,6 +118,13 @@ Models live in `~/Library/Application Support/Feynt/models`.
   memory goes back to the system. The timeout runs from a minute to an hour, or off.
 - Prefix cache: up to four conversations stay warm, capped at 12 GB. The memory is spent on
   purpose, so that the same prefill is never paid for twice.
+- Update checks: shortly after launch and once a day Feynt asks GitHub for the latest
+  release, and if it is newer says so — a system notification once per version, and an
+  "Update available" item at the top of the menu. It does not replace itself: Feynt is a
+  Homebrew cask, and an app that swapped its own bundle would leave Homebrew believing the
+  old version is installed. Update with `brew upgrade --cask feynt`. The one request carries
+  nothing but the app's version in its User-Agent; "Check for updates automatically" in the
+  menu turns it off, and "Check for Updates…" asks on demand.
 - Model downloads over ranged requests, 8 MB chunks, eight in flight: 45 MB/s against the
   4 MB/s of a single-stream client. An interrupted download resumes, a rejected chunk is
   retried, and a file appears under its real name only once it is whole.
