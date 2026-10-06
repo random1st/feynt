@@ -249,10 +249,11 @@ Signing is ad-hoc by default. For a distributable build:
 FEYNT_SIGN_IDENTITY="Developer ID Application: …" ./package-app.sh release
 ```
 
-Tests come in two kinds. `swift test` checks, without a model and in under a second, what
+Tests come in two kinds. `FEYNT_TESTS=1 swift test` checks, without a model and in under a second, what
 decides what a model may touch: the folder boundary, credential locations, private
 addresses, globs and the tool-call budget. None of it touches MLX, which from a SwiftPM test
-run would not find its metallib.
+run would not find its metallib. The variable keeps the test target out of a
+release build, which Xcode otherwise compiles differently, 13 MB larger.
 
 `Tests/e2e` drives a running Feynt over HTTP: both protocols, the official MCP and A2A
 clients, the model's tools, and that a cancelled or abandoned request frees the GPU. It loads

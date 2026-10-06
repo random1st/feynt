@@ -1,4 +1,5 @@
 // swift-tools-version:5.9
+import Foundation
 import PackageDescription
 
 // mlx-swift-lm comes from a sibling checkout, not from GitHub: the Qwen3.5 MTP drafter
@@ -31,13 +32,19 @@ let package = Package(
                 .product(name: "HuggingFace", package: "swift-huggingface"),
                 .product(name: "Tokenizers", package: "swift-transformers"),
             ],
-            path: "Sources/Feynt"),
-        // The logic that decides what a model may touch - folder, secrets, addresses, the
-        // tool budget - checked without a model, in seconds. Protocol and generation tests
-        // run against a live app instead; see `scripts/e2e`.
-        .testTarget(
-            name: "FeyntTests",
-            dependencies: ["Feynt"],
-            path: "Tests/FeyntTests"),
+            path: "Sources/Feynt")
     ]
 )
+
+// The logic that decides what a model may touch - folder, secrets, addresses, the tool
+// budget - checked without a model, in seconds: `FEYNT_TESTS=1 swift test`. Protocol and
+// generation tests run against a live app instead; see `Tests/e2e`.
+//
+// Behind a variable because a test target that imports the executable changes how Xcode
+// builds it: with this target present `package-app.sh` produced a 34.7 MB binary against
+// 22.5 MB without it, the same source. A release must not be a different build because
+// tests exist.
+if ProcessInfo.processInfo.environment["FEYNT_TESTS"] == "1" {
+    package.targets.append(
+        .testTarget(name: "FeyntTests", dependencies: ["Feynt"], path: "Tests/FeyntTests"))
+}
