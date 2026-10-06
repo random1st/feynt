@@ -10,12 +10,44 @@ struct HTTPRequest {
 
 /// Writes one response per connection. Either a complete body or an SSE stream; both end by
 /// closing the socket, so no chunked transfer encoding is needed.
-final class HTTPResponder {
+final class HTTPResponder: @unchecked Sendable {
     private let connection: NWConnection
+    private let lock = NSLock()
     private var closed = false
+    private var peerHandler: (() -> Void)?
+    private var peerGone = false
 
     init(connection: NWConnection) {
         self.connection = connection
+    }
+
+    /// Called once if the client closes the connection before the response is finished.
+    ///
+    /// Without it a client that gave up - a tool call that timed out in Claude Code, a turn
+    /// interrupted in pi - left the generation running to its token budget with the GPU
+    /// held and every other request queued behind it. A handler set after the client has
+    /// already gone runs at once, so a route cannot miss a disconnect by setting it late.
+    var onPeerClosed: (() -> Void)? {
+        get { lock.withLock { peerHandler } }
+        set {
+            let runNow: Bool = lock.withLock {
+                peerHandler = newValue
+                return peerGone && !closed
+            }
+            if runNow, let newValue { newValue() }
+        }
+    }
+
+    /// The server's read side reports end-of-stream here. Our own `finish()` marks the
+    /// response closed before it cancels the connection, so that cancellation is not
+    /// mistaken for the client leaving.
+    func peerClosed() {
+        let handler: (() -> Void)? = lock.withLock {
+            guard !closed, !peerGone else { return nil }
+            peerGone = true
+            return peerHandler
+        }
+        handler?()
     }
 
     func send(status: Int, contentType: String, body: Data) {
@@ -48,8 +80,11 @@ final class HTTPResponder {
     /// Half-closes the send side and only then cancels. A bare `cancel()` drops writes still
     /// queued on the connection, which silently truncated SSE responses.
     func finish() {
-        guard !closed else { return }
-        closed = true
+        let wasClosed: Bool = lock.withLock {
+            defer { closed = true }
+            return closed
+        }
+        guard !wasClosed else { return }
         connection.send(
             content: nil,
             contentContext: .finalMessage,
@@ -58,7 +93,7 @@ final class HTTPResponder {
     }
 
     private func write(_ data: Data, then completion: (() -> Void)?) {
-        guard !closed else { return }
+        guard !lock.withLock({ closed }) else { return }
         connection.send(
             content: data,
             completion: .contentProcessed { _ in completion?() })
@@ -140,7 +175,9 @@ final class HTTPServer {
                 return
             }
             if let request = Self.parse(buffer) {
-                self.handler(request, HTTPResponder(connection: connection))
+                let responder = HTTPResponder(connection: connection)
+                self.handler(request, responder)
+                self.watchForClose(connection, responder)
                 return
             }
             if isComplete || error != nil {
@@ -148,6 +185,22 @@ final class HTTPServer {
                 return
             }
             self.receive(connection, buffer: buffer)
+        }
+    }
+
+    /// Keeps reading after the request so that the client closing its side is noticed.
+    ///
+    /// The responses close the connection themselves (`Connection: close`), so anything a
+    /// client sends after its request is not a second request and is dropped. What matters
+    /// is end-of-stream: it is the only way a client says it no longer wants the answer.
+    private func watchForClose(_ connection: NWConnection, _ responder: HTTPResponder) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) {
+            [weak self] _, _, isComplete, error in
+            if isComplete || error != nil {
+                responder.peerClosed()
+                return
+            }
+            self?.watchForClose(connection, responder)
         }
     }
 

@@ -63,11 +63,15 @@ extension APIServer {
         }
 
         let modern = requested != nil
-        Task { @MainActor in
+        let task = Task { @MainActor in
             let (status, payload) = await self.dispatchMCP(
                 method: method, params: params, id: id, modern: modern)
             responder.sendJSON(status: status, object: payload)
         }
+        // A client that hangs up no longer wants the answer. Cancelling the task stops the
+        // generation itself - `completeLocally` reads the engine's stream, and the stream
+        // ends the decode loop when nobody reads it - so the GPU is free for whoever is next.
+        responder.onPeerClosed = { task.cancel() }
     }
 
     private func dispatchMCP(

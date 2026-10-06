@@ -228,13 +228,16 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
         }
         metrics.requests += 1
 
-        Task { [weak self] in
+        let task = Task { [weak self] in
             guard let self else { return }
             // One generation at a time; everything else queues behind this.
             await self.gate.acquire()
             defer { Task { await self.gate.release() } }
             await self.run(parsed, spec: spec, responder: responder)
         }
+        // Same as the MCP route: a client that hangs up mid-answer - an agent interrupting a
+        // turn - stops the generation instead of leaving it to finish for nobody.
+        responder.onPeerClosed = { task.cancel() }
     }
 
     /// Clients like pi name a model. With more than one resident the name decides which
