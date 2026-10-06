@@ -31,6 +31,13 @@ let package = Package(
                 .product(name: "HuggingFace", package: "swift-huggingface"),
                 .product(name: "Tokenizers", package: "swift-transformers"),
             ],
-            path: "Sources/Feynt")
+            path: "Sources/Feynt"),
+        // The logic that decides what a model may touch - folder, secrets, addresses, the
+        // tool budget - checked without a model, in seconds. Protocol and generation tests
+        // run against a live app instead; see `scripts/e2e`.
+        .testTarget(
+            name: "FeyntTests",
+            dependencies: ["Feynt"],
+            path: "Tests/FeyntTests"),
     ]
 )

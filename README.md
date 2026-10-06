@@ -249,8 +249,19 @@ Signing is ad-hoc by default. For a distributable build:
 FEYNT_SIGN_IDENTITY="Developer ID Application: …" ./package-app.sh release
 ```
 
-Run the tests through `xcodebuild` rather than `swift test`: from a SwiftPM test run
-`mlx-swift` does not find its metallib.
+Tests come in two kinds. `swift test` checks, without a model and in under a second, what
+decides what a model may touch: the folder boundary, credential locations, private
+addresses, globs and the tool-call budget. None of it touches MLX, which from a SwiftPM test
+run would not find its metallib.
+
+`Tests/e2e` drives a running Feynt over HTTP: both protocols, the official MCP and A2A
+clients, the model's tools, and that a cancelled or abandoned request frees the GPU. It loads
+and unloads models, so point it at a copy rather than the Feynt you use:
+
+```sh
+FEYNT_URL=http://127.0.0.1:19235 FEYNT_MODEL=uncensored-moe \
+    uv run --with pytest --with mcp --with a2a-sdk pytest Tests/e2e
+```
 
 ## Architecture
 
