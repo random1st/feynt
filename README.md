@@ -4,8 +4,8 @@ Local language models on Apple Silicon at 2.7x the speed of plain decoding: a sm
 model pulls a feint, proposing a whole block of tokens at once, and the large one confirms
 them in a single pass. Hence the name.
 
-The app lives in the menu bar. Inside it there is a chat, a first-run wizard and an
-OpenAI-compatible server. The engine runs **inside the app** through MLX Swift: no Python,
+The app lives in the menu bar. Inside it there is a chat, a first-run wizard, an
+OpenAI-compatible server, and MCP and A2A endpoints so other agents can use the local model. The engine runs **inside the app** through MLX Swift: no Python,
 no child process, nothing to install beforehand.
 
 ## Install
@@ -39,6 +39,12 @@ reads and dequantises each weight group once for the whole block, and those same
 cost **1.51**. That is what makes the full block worth drafting, and it is worth **1.45x**
 end to end on the same hardware and prompt.
 
+A round also used to wait on itself. Between drafting and verifying, the CPU stopped until
+the GPU had finished the draft — a sync that existed only to time the phase for the log, since
+nothing on the CPU reads the draft. Queuing it instead lets the CPU build the verify while the
+GPU still drafts: **+8%** on an agent-shaped prompt (92.0 → 99.6 tok/s) and **+15%** on short
+code (194.2 → 224.1), with the same output token for token.
+
 The second source of pauses is prefill rather than generation: every turn of a conversation
 re-sends the whole history, and the model used to re-read all of it. The state of recent
 prompts now stays in memory, and the second turn reuses **1024 of 1042** prompt tokens:
@@ -46,7 +52,7 @@ prefill is 28 times faster than cold, and the answer is identical to the charact
 
 ## Models
 
-Four of them. A model gets listed only if speculation measurably speeds it up; every
+Three of them. A model gets listed only if speculation measurably speeds it up; every
 candidate was run against its own plain decode, warm.
 
 | Model | Plain decode | With speculation | Speedup | Accepted per round |
@@ -66,13 +72,11 @@ source, the same two MoEs look different:
 So **point a coding agent at `Qwen3.6-35B-A3B Uncensored`**. The two 27Bs share
 `incoai/Qwen3.8-27B-DFlash2`.
 
-`Qwen3.6-35B-A3B Uncensored` is paired for an agent rather than for a chat, and that is a
-trade with a measured price. Its drafter is `incoai/Qwen3.6-35B-A3B-DFlash2`, quantised to
-four bits when it loads. On 5.3k tokens of this repository's own source with a request to
-write code against it — the shape an agent actually sends — that pairing does 97-98 tok/s
-against 84-85 for the previous one, at 3.22 accepted per round against 3.07. It is 9%
-faster on short code and 12% on a long context, and **10% slower on prose**, which is the
-part of the trade worth knowing before pointing a chat at it.
+`Qwen3.6-35B-A3B Uncensored` drafts with `incoai/Qwen3.6-35B-A3B-DFlash2`. Against the
+previous `z-lab` drafter it is **5.3% faster** on agent-shaped prompts — code written against
+a few thousand tokens of real source — and it won on every one of three such contexts, in
+Python, Swift and Markdown, which is the bar a change has to clear here. It is slower on
+prose, which is the trade worth knowing before pointing a chat at it.
 
 The drafter runs as published. Quantising it looked like a win and was dropped: four bits
 beat bf16 by 6% on one agent prompt and lost to it by 5% on another, which is noise wearing
