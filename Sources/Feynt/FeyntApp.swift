@@ -14,6 +14,37 @@ struct FeyntApp: App {
     /// glyph, with the setup wizard behind a window nobody asked for.
     @Environment(\.openWindow) private var openWindow
 
+    init() {
+        Self.yieldToRunningInstance()
+    }
+
+    /// Exits if another Feynt is already running, and brings that one forward instead.
+    ///
+    /// Two copies fight over the port - the second fails to listen and sits in the menu bar
+    /// looking alive - and each loads its own weights, which is 20 GB twice. Launch Services
+    /// already refuses a second launch of the same bundle; this catches the other way in, a
+    /// second bundle with the same identifier (a build next to the installed app). Checked
+    /// here, before the app state exists, so the loser never binds the port or loads a model.
+    ///
+    /// Only an instance launched earlier wins, so two started at the same moment do not both
+    /// leave. `--generate` and `--download` are diagnostics that print and exit, and run beside
+    /// the app on purpose.
+    private static func yieldToRunningInstance() {
+        let headless = CommandLine.arguments.contains { $0 == "--generate" || $0 == "--download" }
+        guard !headless, let id = Bundle.main.bundleIdentifier else { return }
+        let me = NSRunningApplication.current
+        let mine = me.launchDate ?? Date()
+        let earlier = NSRunningApplication.runningApplications(withBundleIdentifier: id).first {
+            guard $0.processIdentifier != me.processIdentifier, !$0.isTerminated else { return false }
+            let theirs = $0.launchDate ?? .distantPast
+            return theirs < mine || (theirs == mine && $0.processIdentifier < me.processIdentifier)
+        }
+        guard let earlier else { return }
+        AppLog.write("another Feynt is running (pid \(earlier.processIdentifier)); exiting")
+        earlier.activate()
+        exit(0)
+    }
+
 
     var body: some Scene {
         Window("Feynt", id: MainWindowID.value) {
