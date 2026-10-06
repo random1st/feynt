@@ -183,7 +183,9 @@ extension APIServer {
             "name": "generate",
             "title": "Generate with a local model",
             "description": "Answer a prompt with a local model on this Mac. Private and free; "
-                + "suits drafts, boilerplate, summaries and second opinions. Greedy decoding.",
+                + "suits drafts, boilerplate, summaries and second opinions. The model can look "
+                + "things up on its own - fetch a public page, and read or search files in a "
+                + "workspace folder you name - but it does not write or run anything. Greedy decoding.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
@@ -197,10 +199,21 @@ extension APIServer {
                         "type": "integer", "minimum": 1, "maximum": 8192,
                         "description": "Upper bound on the answer's length. Default 1024.",
                     ],
+                    "workspace": [
+                        "type": "string",
+                        "description": "Absolute path of a folder the model may read with its "
+                            + "own read_file, list_files and grep tools while answering.",
+                    ],
+                    "tools": [
+                        "type": "boolean",
+                        "description": "Let the model use its read-only tools (web_fetch, and the "
+                            + "file tools when a workspace is given). Default true.",
+                    ],
                 ],
                 "required": ["prompt"],
             ],
-            "annotations": ["readOnlyHint": true, "openWorldHint": false],
+            // Read-only, but not closed-world: with tools on, the model may fetch a public page.
+            "annotations": ["readOnlyHint": true, "openWorldHint": true],
         ],
     ]
 
@@ -274,10 +287,17 @@ extension APIServer {
                     turns.append(EngineTurn(role: .system, content: system))
                 }
                 turns.append(EngineTurn(role: .user, content: prompt))
-                let result = try await completeLocally(turns: turns, spec: spec, maxTokens: maxTokens)
+                let tools = try localTools(
+                    enabled: (arguments["tools"] as? Bool) ?? true,
+                    workspace: arguments["workspace"] as? String)
+                let result = try await completeLocally(
+                    turns: turns, spec: spec, maxTokens: maxTokens, tools: tools)
                 return Self.toolResult(result.text, structured: [
                     "text": result.text,
                     "model": spec.repo,
+                    "toolCalls": result.toolCalls.map {
+                        ["name": $0.call.name, "arguments": $0.call.argumentsJSON, "isError": $0.isError]
+                    },
                     "generatedTokens": result.stats.generatedTokens,
                     "tokensPerSecond": result.stats.tokensPerSecond,
                     "promptTokens": result.stats.promptTokens,

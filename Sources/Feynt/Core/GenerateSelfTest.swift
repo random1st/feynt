@@ -37,6 +37,68 @@ private var probeTools: [[String: any Sendable]]? {
     print(String(format: "loaded %@ in %.1fs, speculative: %@", spec.repo,
                  Date().timeIntervalSince(started), engine.speculative ? "yes" : "no"))
 
+    // `--chat` drives the real ChatStore - the object behind the chat window - so the parts
+    // a tool loop adds there can be checked without clicking: one bubble per round, a tool
+    // row between them, and the calls going back with the history on the next message.
+    // `--follow-up <text>` sends a second message in the same conversation.
+    if CommandLine.arguments.contains("--chat") {
+        let settings = AppState.shared.settings
+        settings.selectedModelID = spec.id
+        let chat = ChatStore(engine: engine, settings: settings)
+        chat.toolsEnabled = true
+        chat.workspace = CommandLine.arguments.firstIndex(of: "--workspace")
+            .flatMap { CommandLine.arguments.count > $0 + 1 ? CommandLine.arguments[$0 + 1] : nil }
+            .map { Workspace(URL(fileURLWithPath: $0)) }
+        let followUp = CommandLine.arguments.firstIndex(of: "--follow-up")
+            .flatMap { CommandLine.arguments.count > $0 + 1 ? CommandLine.arguments[$0 + 1] : nil }
+        for question in [prompt] + (followUp.map { [$0] } ?? []) {
+            chat.draft = question
+            chat.send()
+            while chat.isStreaming { try? await Task.sleep(for: .milliseconds(200)) }
+        }
+        for message in chat.messages {
+            switch message.role {
+            case .tool:
+                let head = message.text.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
+                print("  [tool \(message.toolName ?? "?") \(message.toolArguments ?? "")] -> \(message.isError ? "ERROR " : "")\(head.prefix(90))")
+            default:
+                let calls = message.toolCalls.isEmpty ? "" : " (asked for \(message.toolCalls.map(\.name).joined(separator: ", ")))"
+                let text = message.text.replacingOccurrences(of: "\n", with: " ").prefix(140)
+                print("\(message.role.rawValue)\(calls): \(text)")
+            }
+        }
+        if let error = chat.errorMessage { print("ERROR: \(error)") }
+        exit(0)
+    }
+
+    // `--local-tools` runs the model with Feynt's own read-only tools and the same loop the
+    // chat, MCP and A2A use, so the loop can be checked against the real model without a UI.
+    // `--workspace <dir>` gives the file tools a folder; without it only web_fetch is offered.
+    if CommandLine.arguments.contains("--local-tools") {
+        let workspace = CommandLine.arguments.firstIndex(of: "--workspace")
+            .flatMap { CommandLine.arguments.count > $0 + 1 ? CommandLine.arguments[$0 + 1] : nil }
+            .map { Workspace(URL(fileURLWithPath: $0)) }
+        do {
+            let result = try await APIServer.runToolLoop(
+                turns: [EngineTurn(role: .user, content: prompt)], spec: spec, maxTokens: 1024,
+                tools: LocalTools(workspace: workspace),
+                generate: { turns, options in try await engine.generate(turns: turns, options: options) },
+                onText: nil,
+                onToolUse: { use in
+                    let args = use.call.argumentsJSON.prefix(120)
+                    let head = use.result.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
+                    print("TOOL \(use.call.name) \(args) -> \(use.isError ? "ERROR " : "")\(head.prefix(140))")
+                })
+            print("--- answer ---")
+            print(result.text)
+            print("--- \(result.toolCalls.count) tool calls · \(result.stats.generatedTokens) tokens ---")
+        } catch {
+            print("loop failed: \(error.localizedDescription)")
+            exit(1)
+        }
+        exit(0)
+    }
+
     // `--with-tools` hands the model a small toolbox, so the run also proves the parts a
     // plain prompt cannot: that the chat template accepts tools, that the model asks for one
     // in its own dialect, and that the parser turns that back into a call.

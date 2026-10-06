@@ -125,6 +125,13 @@ Models live in `~/Library/Application Support/Feynt/models`.
   load and unload, re-download, chat, log, idle timeout.
 - Chat with streaming and a separate collapsible reasoning area, a model switcher and an
   unload button in its top bar.
+- Model tools, read-only on purpose: `read_file`, `list_files` and `grep` inside a folder you
+  pick, and `web_fetch` for public pages. Nothing writes or runs — a local model is not
+  trusted with that, and in agent mode nobody is there to approve it. The folder is the
+  boundary (symlinks are resolved before the check), credential locations such as `~/.ssh`,
+  `~/.aws` and `.env` files are refused in any folder, and `web_fetch` refuses loopback,
+  private and link-local addresses, on every redirect too. At most six calls per answer.
+  The chat has a **Tools** toggle and a folder menu; each call shows as a row you can open.
 - Idle unload: the references to the weights are dropped, the MLX cache is cleared and the
   memory goes back to the system. The timeout runs from a minute to an hour, or off.
 - Prefix cache: up to four conversations stay warm, capped at 12 GB. The memory is spent on
@@ -190,7 +197,9 @@ use the local model without being configured as an OpenAI client.
 **MCP** — `POST /mcp`, revision 2026-07-28, with the `initialize` handshake of earlier
 revisions answered too, since most hosts in use still open with it. Four tools:
 `list_models` (what is downloaded, loaded and active), `load_model`, `unload_model`, and
-`generate` (a prompt, an optional system prompt and model, an answer). Downloading is
+`generate` (a prompt, an optional system prompt and model, an answer). `generate` lets the
+model use the tools above: `workspace` names the folder it may read, `tools: false` turns
+them off; the calls it made come back in `structuredContent.toolCalls`. Downloading is
 deliberately not a tool: a model is 16–20 GB, which is not something an agent should start
 without being asked.
 
@@ -201,7 +210,8 @@ claude mcp add --transport http feynt http://127.0.0.1:19234/mcp
 **A2A** — agent card at `/.well-known/agent-card.json`, JSON-RPC at `POST /a2a`, protocol
 1.0: `SendMessage`, `SendStreamingMessage`, `GetTask`, `CancelTask`. Messages that share a
 `contextId` continue one conversation. `metadata.model` picks the model (`uncensored-moe`,
-`uncensored`, `stock`); without it the active one answers. `CancelTask` stops the
+`uncensored`, `stock`); without it the active one answers. `metadata.workspace` and
+`metadata.tools` do what they do for MCP `generate`. `CancelTask` stops the
 generation itself — the next request is answered as on an idle machine — rather than only
 marking the task.
 

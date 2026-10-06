@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct ChatView: View {
@@ -128,12 +129,48 @@ struct ChatView: View {
         }
     }
 
+    /// The folder the file tools may read. Shown by name so it is always visible what the
+    /// model can see; without one it can only fetch public pages.
+    private var workspaceButton: some View {
+        Menu {
+            Button("Choose folder…", action: chooseWorkspace)
+            if chat.workspace != nil {
+                Button("No folder — web only") { chat.workspace = nil }
+            }
+        } label: {
+            Label(chat.workspace?.name ?? "No folder", systemImage: "folder")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(chat.isStreaming)
+        .help(chat.workspace?.root.path ?? "Choose a folder the model may read")
+    }
+
+    private func chooseWorkspace() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Use folder"
+        panel.message = "The model will be able to read and search files in this folder."
+        if panel.runModal() == .OK, let url = panel.url {
+            chat.workspace = Workspace(url)
+        }
+    }
+
     private var composer: some View {
         VStack(spacing: 8) {
             HStack {
                 Toggle("Reasoning", isOn: $chat.thinkingEnabled)
                     .toggleStyle(.switch)
                     .disabled(chat.isStreaming)
+                Toggle("Tools", isOn: $chat.toolsEnabled)
+                    .toggleStyle(.switch)
+                    .disabled(chat.isStreaming)
+                    .help("Let the model fetch public pages, and read and search files in the chosen folder. It never writes or runs anything.")
+                if chat.toolsEnabled {
+                    workspaceButton
+                }
                 Spacer()
                 // The chat is the demo surface: whether speculation is on, and what it buys,
                 // belongs here rather than only behind a menu-bar click.
@@ -213,6 +250,14 @@ private struct MessageBubble: View {
     @State private var reasoningExpanded = false
 
     var body: some View {
+        if message.role == .tool {
+            ToolRow(message: message)
+        } else {
+            bubble
+        }
+    }
+
+    private var bubble: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(message.role == .user ? "You" : "Model")
                 .font(.caption).foregroundStyle(.secondary)
@@ -250,6 +295,53 @@ private struct MessageBubble: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// One tool call in the transcript: what the model asked for on one line, the result folded
+/// away. The result is what the model read - worth being able to check, not worth reading
+/// every time.
+private struct ToolRow: View {
+    let message: ChatMessage
+    @State private var expanded = false
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            Text(message.text)
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+                .background(Color.secondary.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: message.isError ? "exclamationmark.triangle" : icon)
+                    .foregroundStyle(message.isError ? Color.orange : Color.secondary)
+                Text(message.toolName ?? "tool").font(.system(.caption, design: .monospaced)).bold()
+                Text(summary).font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var icon: String {
+        switch message.toolName {
+        case "web_fetch": return "globe"
+        case "grep": return "magnifyingglass"
+        case "list_files": return "list.bullet"
+        default: return "doc.text"
+        }
+    }
+
+    /// The arguments as the model sent them, without JSON punctuation: `pattern: WebFetch`.
+    private var summary: String {
+        guard let json = message.toolArguments,
+            let object = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any]
+        else { return message.toolArguments ?? "" }
+        return object.keys.sorted().map { "\($0): \(object[$0].map { "\($0)" } ?? "")" }
+            .joined(separator: "  ")
     }
 }
 

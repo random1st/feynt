@@ -7,6 +7,17 @@ struct ChatMessage: Identifiable, Equatable {
     var text: String = ""
     var reasoning: String = ""
     var isStreaming = false
+    /// An assistant turn that asked for tools carries the calls, and each `.tool` message
+    /// answers one of them; both go back to the model with the history.
+    var toolCalls: [EngineToolCall] = []
+    var toolCallID: String? = nil
+    var toolName: String? = nil
+    var toolArguments: String? = nil
+    var isError = false
+
+    var engineTurn: EngineTurn {
+        EngineTurn(role: role, content: text, toolCalls: toolCalls, toolCallID: toolCallID, toolName: toolName)
+    }
 }
 
 /// Conversation state plus the streaming loop that feeds it.
@@ -17,6 +28,15 @@ final class ChatStore: ObservableObject {
     @Published var thinkingEnabled: Bool
     @Published private(set) var isStreaming = false
     @Published var errorMessage: String?
+    /// Whether the model may use its read-only tools. On by default: they only look things
+    /// up, and a question about a file or a page is answered from the file or the page.
+    @Published var toolsEnabled: Bool {
+        didSet { UserDefaults.standard.set(toolsEnabled, forKey: "chatToolsEnabled") }
+    }
+    /// The folder the file tools read. Without one the model can still fetch public pages.
+    @Published var workspace: Workspace? {
+        didSet { UserDefaults.standard.set(workspace?.root.path, forKey: "chatWorkspace") }
+    }
 
     private let engine: EngineController
     private let settings: AppSettings
@@ -26,6 +46,15 @@ final class ChatStore: ObservableObject {
         self.engine = engine
         self.settings = settings
         thinkingEnabled = settings.thinkingByDefault
+        toolsEnabled = (UserDefaults.standard.object(forKey: "chatToolsEnabled") as? Bool) ?? true
+        // A folder that has since been moved or deleted is forgotten rather than offered.
+        if let saved = UserDefaults.standard.string(forKey: "chatWorkspace"),
+            FileManager.default.fileExists(atPath: saved)
+        {
+            workspace = Workspace(URL(fileURLWithPath: saved))
+        } else {
+            workspace = nil
+        }
     }
 
     var canSend: Bool {
@@ -43,8 +72,10 @@ final class ChatStore: ObservableObject {
         isStreaming = true
 
         // Prior turns go back with every request; the engine keeps no session of its own.
-        let history = messages.dropLast().map { EngineTurn(role: $0.role, content: $0.text) }
+        let history = messages.dropLast().map(\.engineTurn)
         let thinking = thinkingEnabled
+        let tools = toolsEnabled ? LocalTools(workspace: workspace) : nil
+        let spec = settings.selectedModel
 
         streamTask = Task { [weak self] in
             guard let self else { return }
@@ -52,35 +83,49 @@ final class ChatStore: ObservableObject {
                 self.finishStream(error: "No model loaded")
                 return
             }
+            var current = placeholder.id
+            var needsBubble = false
+            let started = Date()
+            var produced = 0
             do {
-                let options = self.engine.uiOptions(thinking: thinking)
-                let stream = try await self.engine.generate(
-                    turns: Array(history), options: options)
-                let started = Date()
-                var produced = 0
-                for await event in stream {
-                    if Task.isCancelled { break }
-                    switch event {
-                    case .text(let chunk):
-                        self.append(text: chunk, to: placeholder.id)
+                let result = try await APIServer.runToolLoop(
+                    turns: Array(history), spec: spec, maxTokens: self.settings.maxTokens,
+                    tools: tools, thinking: thinking,
+                    generate: { [engine = self.engine] turns, options in
+                        try await engine.generate(turns: turns, options: options)
+                    },
+                    onText: { chunk in
+                        // A tool round ends one assistant bubble; the text after it opens
+                        // the next, so each tool row sits between what led to it and what
+                        // followed.
+                        if needsBubble {
+                            let bubble = ChatMessage(role: .assistant, isStreaming: true)
+                            self.messages.append(bubble)
+                            current = bubble.id
+                            needsBubble = false
+                        }
+                        self.append(text: chunk, to: current)
                         produced += chunk.count
-                    case .reasoning(let chunk):
-                        self.append(reasoning: chunk, to: placeholder.id)
-                    case .toolCall(let call):
-                        // The chat window offers no tools, so a call here means the model
-                        // invented one. Showing it as text is more honest than dropping it.
-                        self.append(
-                            text: "\n[tool call: \(call.name)\(call.argumentsJSON)]\n",
-                            to: placeholder.id)
-                    case .finished(let stats):
-                        self.engine.generationFinished(stats)
-                    }
-                    let elapsed = Date().timeIntervalSince(started)
-                    if elapsed > 1 {
-                        // Rough live rate for the menu bar; the exact count arrives with .finished.
-                        self.engine.reportLiveRate(Double(produced) / 4.0 / elapsed)
-                    }
-                }
+                        let elapsed = Date().timeIntervalSince(started)
+                        if elapsed > 1 {
+                            self.engine.reportLiveRate(Double(produced) / 4.0 / elapsed)
+                        }
+                    },
+                    onReasoning: { chunk in self.append(reasoning: chunk, to: current) },
+                    onToolUse: { use in
+                        if let index = self.messages.firstIndex(where: { $0.id == current }) {
+                            self.messages[index].toolCalls.append(use.call)
+                            self.messages[index].isStreaming = false
+                        }
+                        self.messages.append(ChatMessage(
+                            role: .tool, text: use.result, toolCallID: use.call.id,
+                            toolName: use.call.name, toolArguments: use.call.argumentsJSON,
+                            isError: use.isError))
+                        needsBubble = true
+                    })
+                self.engine.generationFinished(result.stats)
+                self.finishStream(error: nil)
+            } catch is CancellationError {
                 self.finishStream(error: nil)
             } catch {
                 self.finishStream(error: error.localizedDescription)

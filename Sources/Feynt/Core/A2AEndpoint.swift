@@ -99,7 +99,10 @@ extension APIServer {
                     "description": "Answers a message with a local model. A conversation "
                         + "continues across messages that share a contextId. Pick the model "
                         + "with `metadata.model` (a catalog id such as `uncensored-moe`); "
-                        + "without it the active model answers.",
+                        + "without it the active model answers. The model may look things up "
+                        + "with read-only tools: it fetches public pages, and reads and searches "
+                        + "files in `metadata.workspace` when that names a folder. "
+                        + "`metadata.tools: false` turns them off.",
                     "tags": ["local", "private", "offline", "code", "text"],
                     "examples": [
                         "Write a Swift function that parses an ISO-8601 date.",
@@ -204,6 +207,7 @@ extension APIServer {
         let text: String
         let contextId: String
         let spec: ModelSpec
+        let tools: LocalTools?
         let maxTokens: Int
         let returnImmediately: Bool
         let historyLength: Int?
@@ -240,8 +244,15 @@ extension APIServer {
             return .failure(A2AFault(-32602, error.localizedDescription))
         }
         let configuration = params["configuration"] as? [String: Any] ?? [:]
+        let tools: LocalTools?
+        do {
+            tools = try localTools(
+                enabled: (metadata["tools"] as? Bool) ?? true, workspace: metadata["workspace"] as? String)
+        } catch {
+            return .failure(A2AFault(-32602, error.localizedDescription))
+        }
         return .success(A2ARequest(
-            message: message, text: text, contextId: contextId, spec: spec,
+            message: message, text: text, contextId: contextId, spec: spec, tools: tools,
             maxTokens: min(max((metadata["maxTokens"] as? Int) ?? 2048, 1), 8192),
             returnImmediately: configuration["returnImmediately"] as? Bool ?? false,
             historyLength: configuration["historyLength"] as? Int))
@@ -266,14 +277,17 @@ extension APIServer {
             guard let self else { return }
             do {
                 let result = try await self.completeLocally(
-                    turns: turns, spec: request.spec, maxTokens: request.maxTokens, onText: onText)
+                    turns: turns, spec: request.spec, maxTokens: request.maxTokens,
+                    tools: request.tools, onText: onText)
                 guard var done = self.a2a.tasks[taskId], !done.isTerminal else { return }
+                // The transcript, not the last round: a streaming client has already been sent
+                // every word, and the artifact it can fetch later should match what it saw.
                 let reply: [String: Any] = [
                     "messageId": UUID().uuidString, "contextId": request.contextId, "taskId": taskId,
-                    "role": "ROLE_AGENT", "parts": [["text": result.text]],
+                    "role": "ROLE_AGENT", "parts": [["text": result.transcript]],
                 ]
                 done.state = "TASK_STATE_COMPLETED"
-                done.answer = result.text
+                done.answer = result.transcript
                 done.history.append(reply)
                 done.updated = Date()
                 self.a2a.store(done)
