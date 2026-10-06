@@ -11,14 +11,22 @@ no child process, nothing to install beforehand.
 ## Install
 
 ```sh
-brew tap random1st/feynt https://github.com/random1st/feynt
-brew install --cask feynt
+brew install --cask random1st/feynt/feynt
 ```
 
-The URL in the first line is not optional. Given only `random1st/feynt`, Homebrew looks for
-a repository named `homebrew-feynt`, which does not exist: the cask lives in this
-repository, in `Casks/feynt.rb`, and is updated with every release. If Homebrew asks you to
-trust the tap first, run `brew trust random1st/feynt` and repeat.
+If Homebrew asks you to trust the tap first, run `brew trust random1st/feynt` and repeat.
+
+Homebrew reads `random1st/feynt` as the repository `random1st/homebrew-feynt`. That name is
+a GitHub redirect to this repository, so the cask lives in one place — `Casks/feynt.rb`
+here, updated with every release — and the short command still works.
+
+Installed before 0.8.1 and Homebrew now says `Cask 'feynt' is unreadable`? Your tap is a
+clone of the old, separate tap repository, and the update collided with this one's history.
+Reset it once:
+
+```sh
+brew update-reset "$(brew --repo random1st/feynt)"
+```
 
 The app is signed with a Developer ID and notarised by Apple, and both the app and the DMG
 carry their own ticket, so the first launch needs no network round trip and no manual
