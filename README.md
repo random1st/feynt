@@ -69,9 +69,9 @@ prefill is 28 times faster than cold, and the answer is identical to the charact
 
 ## Models
 
-Four of them. The three large ones are listed because speculation measurably speeds them
-up; every candidate was run against its own plain decode, warm. The fourth is listed for
-memory, not speed — see [the small one](#the-small-one).
+Five of them. The three large ones are listed because speculation measurably speeds them
+up; every candidate was run against its own plain decode, warm. The two small ones are
+listed for memory and for small jobs — see [the small ones](#the-small-ones).
 
 | Model | Plain decode | With speculation | Speedup | Accepted per round |
 |---|---:|---:|---:|---:|
@@ -121,7 +121,15 @@ tok/s and costs 42 GB with no DFlash 2 drafter in existence; LFM2.5-8B-A1B is fa
 result, which is where an agent actually lives; the 3.5 generation gained 1.0-1.4x on
 DFlash 1 drafters that have no candidate selector.
 
-### The small one
+### The small ones
+
+**Qwen3.5-2B** is the one to hand small agent jobs to: summarise, extract, classify, look
+something up with the read-only tools. 1.7 GB, and the fastest model here — 241 tok/s on
+a short prompt, 123 on a 36k-token log, 77 at 100k, where the 35B-A3B manages 48-53 on an
+8k-token summary. On an agent-shaped check — a value found with `read_file`, a file found
+with `grep`, JSON pulled out of a message, five lines classified — it got all four right,
+as did Qwen3.5-4B and the MoE; LFM2.5-8B-A1B returned nothing on the last two. Capped at
+120,000 tokens, which keeps it under 8 GB (6.7 GB at 100k).
 
 **Qwen3.5-4B** is for summaries, log digging and long documents on a machine that has to
 keep its memory for something else: the whole process, weights and context, stays under

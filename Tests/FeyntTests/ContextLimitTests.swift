@@ -18,8 +18,9 @@ import Testing
         try GenerationOptions(maxTokens: 500).checkContext(promptTokens: 1_000_000)
     }
 
-    @Test func onlyTheSmallModelIsCapped() {
+    @Test func onlyTheSmallModelsAreCapped() {
         #expect(ModelCatalog.small.contextLimit == 56_000)
-        #expect(ModelCatalog.all.filter { $0.contextLimit != nil }.map(\.id) == ["small"])
+        #expect(ModelCatalog.tiny.contextLimit == 120_000)
+        #expect(ModelCatalog.all.filter { $0.contextLimit != nil }.map(\.id) == ["small", "tiny"])
     }
 }

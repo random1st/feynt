@@ -172,7 +172,31 @@ enum ModelCatalog {
         drafterApproximateBytes: 0,
         contextLimit: 56_000)
 
-    static let all: [ModelSpec] = [uncensoredMoE, uncensored, stock, small]
+    /// The fast one, for the small jobs an agent hands off: summarise, extract, classify,
+    /// look something up with the read-only tools. 1.7 GB, and it decodes faster than any
+    /// other model here - 241 tok/s on a short prompt, 123 on a 36k-token log, 77 at 100k,
+    /// where the 35B-A3B MoE manages 48-53 on an 8k-token summary.
+    ///
+    /// Picked on an agent-shaped check, 2026-10-07, against Qwen3.5-4B, the 4B with z-lab's
+    /// DFlash drafter, LFM2.5-8B-A1B and the MoE: a value looked up with read_file, a file
+    /// found with grep, JSON extracted from a message, five lines classified. It got all
+    /// four right, as did both 4Bs and the MoE; LFM2.5 returned nothing for the last two.
+    /// The drafter slowed the 4B (65-68 against 92 tok/s at 1.74 accepted a round), so this
+    /// one runs plain.
+    ///
+    /// Footprint 3.1 GB short, 5.3 at 36k, 6.7 at 100k - about 22 MB per thousand tokens -
+    /// so the cap keeps it under 8 GB with the same margin as the 4B.
+    static let tiny = ModelSpec(
+        id: "tiny",
+        title: "Qwen3.5-2B",
+        subtitle: "fastest, for simple agent work",
+        repo: "mlx-community/Qwen3.5-2B-MLX-4bit",
+        approximateBytes: 1_720_000_000,
+        drafterRepo: nil,
+        drafterApproximateBytes: 0,
+        contextLimit: 120_000)
+
+    static let all: [ModelSpec] = [uncensoredMoE, uncensored, stock, small, tiny]
 
     static func model(id: String) -> ModelSpec? {
         all.first { $0.id == id }
