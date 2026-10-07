@@ -101,6 +101,10 @@ extension APIServer {
         var transcript = ""
         var generated = 0
         var stats = GenerationStats()
+        // Past the budget a model is offered no tools, and some ask anyway - the 35B-A3B
+        // made 35 calls and returned an empty answer on 2026-10-07, because each refusal
+        // only bought another round. It gets one nudge to answer; after that, the loop ends.
+        var nudged = false
 
         while true {
             try Task.checkCancellation()
@@ -139,6 +143,14 @@ extension APIServer {
                 return LocalCompletion(
                     text: text, model: spec, stats: stats, toolCalls: uses, transcript: transcript)
             }
+            if offered == nil && nudged {
+                stats.generatedTokens = generated
+                let answer = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? "No answer: the model kept asking for tools after its \(toolCallBudget) "
+                        + "calls were spent." : text
+                return LocalCompletion(
+                    text: answer, model: spec, stats: stats, toolCalls: uses, transcript: transcript)
+            }
             turns.append(EngineTurn(role: .assistant, content: text, toolCalls: calls))
             for call in calls {
                 // Past the budget a call is answered, not run, so every call the model made
@@ -159,12 +171,24 @@ extension APIServer {
                 turns.append(EngineTurn(
                     role: .tool, content: use.result, toolCallID: call.id, toolName: call.name))
             }
+            if offered == nil {
+                nudged = true
+                turns.append(EngineTurn(
+                    role: .user,
+                    content: "You have no tool calls left. Answer the question now from what the "
+                        + "tools already returned."))
+            }
         }
     }
 
     private static func toolHint(_ tools: LocalTools) -> String {
-        var hint = "You can call tools to look things up before you answer. Use them only when "
-            + "the answer depends on something you have not been shown; answer directly otherwise."
+        // Small models read "only when needed" as permission to guess: asked where a value
+        // is set in the repository, Qwen3.5-2B named a file that does not exist rather than
+        // grep. So the hint says outright which questions need the tools.
+        var hint = "You can call tools to look things up before you answer. When a question is "
+            + "about the files in the working folder or about a web page, call the tools and "
+            + "answer from what they return; never guess what a file or a page says. Answer "
+            + "anything else directly."
         if let workspace = tools.workspace {
             hint += " File tools work inside the folder \(workspace.root.path); paths are relative to it."
         }

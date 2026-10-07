@@ -218,6 +218,7 @@ struct Glob {
 
     init(_ pattern: String) throws {
         var out = "^"
+        var inBraces = false
         var characters = Array(pattern)[...]
         while let c = characters.popFirst() {
             switch c {
@@ -229,6 +230,12 @@ struct Glob {
                     out += "[^/]*"
                 }
             case "?": out += "[^/]"
+            // `{swift,py}` is alternation, as in a shell. Models write it unprompted -
+            // `**/*.{swift,py,ts}` - and with the braces taken literally such a glob matched
+            // nothing, so a search that would have found the answer came back empty.
+            case "{" where !inBraces: inBraces = true; out += "(?:"
+            case "}" where inBraces: inBraces = false; out += ")"
+            case "," where inBraces: out += "|"
             case ".", "(", ")", "+", "|", "^", "$", "{", "}", "[", "]", "\\": out += "\\\(c)"
             default: out.append(c)
             }

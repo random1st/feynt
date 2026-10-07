@@ -82,6 +82,31 @@ private func run(_ model: ScriptedModel, tools: LocalTools?) async throws -> Loc
         #expect(model.rounds.last?.offered.isEmpty == true)
     }
 
+    @Test func aModelThatAsksWithoutBeingOfferedToolsIsStopped() async throws {
+        let box = try Sandbox()
+        defer { box.remove() }
+        // Asks for a tool every round, offered one or not.
+        let model = ScriptedModel { _, _ in [toolCall("list_files", "{}")] }
+        let result = try await run(model, tools: LocalTools(workspace: box.workspace))
+
+        // Six run, one answered "budget spent" with a nudge, then the loop gives up.
+        #expect(model.rounds.count == APIServer.toolCallBudget + 2)
+        #expect(result.toolCalls.count == APIServer.toolCallBudget + 1)
+        #expect(result.text.contains("kept asking for tools"))
+        #expect(model.rounds.last?.turns.last?.role == .user)
+    }
+
+    @Test func theNudgeGetsAnAnswer() async throws {
+        let box = try Sandbox()
+        defer { box.remove() }
+        // Ignores the missing tools once, answers after the nudge.
+        let model = ScriptedModel { round, _ in
+            round <= APIServer.toolCallBudget ? [toolCall("list_files", "{}")] : [.text("Done.")]
+        }
+        let result = try await run(model, tools: LocalTools(workspace: box.workspace))
+        #expect(result.text == "Done.")
+    }
+
     @Test func callsPastTheBudgetInOneRoundAreAnsweredNotRun() async throws {
         let box = try Sandbox()
         defer { box.remove() }

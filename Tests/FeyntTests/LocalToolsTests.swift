@@ -110,6 +110,8 @@ private func call(_ name: String, _ arguments: String) -> EngineToolCall {
         ("*.swift", "src/a.swift", false), ("src/*.md", "src/README.md", true),
         ("src/?.md", "src/a.md", true), ("src/?.md", "src/ab.md", false),
         ("*.(md)", "x.(md)", true), ("**/*", "anything/at/all", true),
+        ("**/*.{swift,py}", "Sources/App.swift", true), ("**/*.{swift,py}", "tools/run.py", true),
+        ("**/*.{swift,py}", "README.md", false), ("{a,b}/*.md", "b/x.md", true),
     ])
     func matches(_ pattern: String, _ path: String, _ expected: Bool) throws {
         #expect(try Glob(pattern).matches(path) == expected)
