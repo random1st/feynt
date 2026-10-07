@@ -50,6 +50,10 @@ struct ModelSpec: Identifiable, Hashable {
     /// today has earned its drafter on the numbers.
     let drafterRepo: String?
     let drafterApproximateBytes: Int64
+    /// Most tokens a request may hold, prompt and reply together; `nil` for no cap beyond
+    /// the model's own. Set where a model is chosen for its memory footprint, since the KV
+    /// cache and the prefill grow with the context and would otherwise spend the saving.
+    var contextLimit: Int? = nil
 
     var directoryName: String {
         repo.split(separator: "/").last.map(String.init) ?? repo
@@ -144,7 +148,31 @@ enum ModelCatalog {
         drafterRepo: "incoai/Qwen3.6-35B-A3B-DFlash2",
         drafterApproximateBytes: 1_053_000_000)
 
-    static let all: [ModelSpec] = [uncensoredMoE, uncensored, stock]
+    /// The one that fits in 8 GB: the whole process, weights and context, stays under it.
+    /// For summaries and log digging on a machine that has to keep its memory for
+    /// something else, not for speed - the MoE above decodes faster than any dense model
+    /// this size, at 56-58 tok/s on a 36k-token log against 31-47 for Qwen3.5-9B.
+    ///
+    /// Footprint measured with `/usr/bin/time -l`, MLX's buffer cache capped as the app
+    /// caps it: 6.3 GB at 36k tokens of context, 7.1 at 51k, 8.0 at 63k, 8.9 at 75k -
+    /// about 75 MB per thousand tokens on top of the weights. The limit leaves room under
+    /// 8 GB. Decode runs 108-121 tok/s on short work and 62 at 51k; reading the prompt,
+    /// 930-1330 tok/s.
+    ///
+    /// No drafter. The 9B's z-lab drafter accepted 1.6-1.8 tokens a round on summaries and
+    /// slowed them down, and on this model it would cost more of the budget than the 3 GB
+    /// of weights could spare.
+    static let small = ModelSpec(
+        id: "small",
+        title: "Qwen3.5-4B",
+        subtitle: "small, fits in 8 GB",
+        repo: "mlx-community/Qwen3.5-4B-MLX-4bit",
+        approximateBytes: 3_030_000_000,
+        drafterRepo: nil,
+        drafterApproximateBytes: 0,
+        contextLimit: 56_000)
+
+    static let all: [ModelSpec] = [uncensoredMoE, uncensored, stock, small]
 
     static func model(id: String) -> ModelSpec? {
         all.first { $0.id == id }

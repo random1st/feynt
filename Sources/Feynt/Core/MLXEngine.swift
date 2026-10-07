@@ -114,6 +114,7 @@ actor MLXEngine: InferenceEngine {
             chat: messages, tools: options.tools,
             additionalContext: ["enable_thinking": options.thinking])
         let input = try await context.processor.prepare(input: userInput)
+        try options.checkContext(promptTokens: input.text.tokens.size)
         let parameters = GenerateParameters(
             maxTokens: options.maxTokens, temperature: options.temperature, topP: 0.8)
 

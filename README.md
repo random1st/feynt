@@ -69,8 +69,9 @@ prefill is 28 times faster than cold, and the answer is identical to the charact
 
 ## Models
 
-Three of them. A model gets listed only if speculation measurably speeds it up; every
-candidate was run against its own plain decode, warm.
+Four of them. The three large ones are listed because speculation measurably speeds them
+up; every candidate was run against its own plain decode, warm. The fourth is listed for
+memory, not speed — see [the small one](#the-small-one).
 
 | Model | Plain decode | With speculation | Speedup | Accepted per round |
 |---|---:|---:|---:|---:|
@@ -120,6 +121,26 @@ tok/s and costs 42 GB with no DFlash 2 drafter in existence; LFM2.5-8B-A1B is fa
 result, which is where an agent actually lives; the 3.5 generation gained 1.0-1.4x on
 DFlash 1 drafters that have no candidate selector.
 
+### The small one
+
+**Qwen3.5-4B** is for summaries, log digging and long documents on a machine that has to
+keep its memory for something else: the whole process, weights and context, stays under
+8 GB. 3 GB of weights, vision in the checkpoint, and three layers of four on linear
+attention, so a long log costs about 75 MB per thousand tokens.
+
+| Context | Footprint | Decode | Reading the prompt |
+|---:|---:|---:|---:|
+| short | 4.2 GB | 108-121 tok/s | — |
+| 36k | 6.3 GB | 72 | 1060 |
+| 55k | 7.6 GB | 57 | 895 |
+
+A request is capped at 56,000 tokens, prompt and reply together; past that it is refused
+with the numbers rather than allowed to spend the budget. It is not the fast option: on a
+36k-token log the 35B-A3B MoE decodes 56-58 tok/s, and Qwen3.5-9B, measured for this slot,
+only 31-47 — a dense model reads all its weights for every token, the MoE about 3B of 35B.
+It runs without a drafter: the 9B's accepted 1.6-1.8 tokens a round on summaries and slowed
+them down.
+
 Weights that are already on disk are found before the app offers to download anything.
 Models live in `~/Library/Application Support/Feynt/models`.
 
@@ -140,6 +161,8 @@ Models live in `~/Library/Application Support/Feynt/models`.
   The chat has a **Tools** toggle and a folder menu; each call shows as a row you can open.
 - Idle unload: the references to the weights are dropped, the MLX cache is cleared and the
   memory goes back to the system. The timeout runs from a minute to an hour, or off.
+- Memory: MLX's cache of freed buffers is capped at 1 GB. Uncapped, one 36k-token prompt
+  left the process at 93 GB, 89 of it cache; capped, 6.3 GB, at the same speed.
 - Prefix cache: up to four conversations stay warm, capped at 12 GB. The memory is spent on
   purpose, so that the same prefill is never paid for twice.
 - Update checks: shortly after launch and once a day Feynt asks GitHub for the latest

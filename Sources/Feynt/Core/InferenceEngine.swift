@@ -74,12 +74,16 @@ struct GenerationOptions: Sendable {
     /// to be told what exists before it can ask for it, and every model spells that
     /// differently — the template owns the spelling, not this app.
     var tools: [[String: any Sendable]]? = nil
+    /// The model's cap on prompt plus reply, from its catalog entry; checked once the
+    /// prompt is tokenised, since only then is its length known.
+    var contextLimit: Int? = nil
 }
 
 enum EngineError: LocalizedError {
     case notLoaded
     case modelMissing(String)
     case loadFailed(String)
+    case contextTooLong(prompt: Int, reply: Int, limit: Int)
 
     var errorDescription: String? {
         switch self {
@@ -89,6 +93,10 @@ enum EngineError: LocalizedError {
             return "Model directory not found: \(path)"
         case .loadFailed(let reason):
             return "Could not load the model: \(reason)"
+        case .contextTooLong(let prompt, let reply, let limit):
+            return "The prompt is \(prompt) tokens and the reply may take \(reply) more, but this "
+                + "model is limited to \(limit) tokens to stay within its memory budget. Shorten "
+                + "the input or use a larger model."
         }
     }
 }
@@ -114,4 +122,12 @@ protocol InferenceEngine: AnyObject, Sendable {
     func generate(
         turns: [EngineTurn], options: GenerationOptions
     ) async throws -> AsyncStream<EngineEvent>
+}
+
+extension GenerationOptions {
+    /// Throws when `promptTokens` plus the reply budget would pass the model's cap.
+    func checkContext(promptTokens: Int) throws {
+        guard let contextLimit, promptTokens + maxTokens > contextLimit else { return }
+        throw EngineError.contextTooLong(prompt: promptTokens, reply: maxTokens, limit: contextLimit)
+    }
 }

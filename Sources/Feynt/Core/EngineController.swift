@@ -181,6 +181,8 @@ final class EngineController: ObservableObject {
         }
         touch(active)
         state = .generating
+        var options = options
+        options.contextLimit = active.contextLimit
         return try await resident.engine.generate(turns: turns, options: options)
     }
 

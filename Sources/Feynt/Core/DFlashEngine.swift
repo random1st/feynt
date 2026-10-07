@@ -224,6 +224,7 @@ actor DFlashEngine: InferenceEngine {
             additionalContext: ["enable_thinking": options.thinking])
         let input = try await context.processor.prepare(input: userInput)
         let prompt = input.text.tokens.asArray(Int.self)
+        try options.checkContext(promptTokens: prompt.count)
 
         let stops = stopTokens
         let tokenizer = context.tokenizer
