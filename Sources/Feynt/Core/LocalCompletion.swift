@@ -63,6 +63,7 @@ extension APIServer {
     /// rather than finishing an answer nobody will receive.
     func completeLocally(
         turns: [EngineTurn], spec: ModelSpec, maxTokens: Int, tools: LocalTools? = nil,
+        responseFormat: ResponseFormat? = nil,
         onText: ((String) -> Void)? = nil, onToolUse: ((ToolUse) -> Void)? = nil
     ) async throws -> LocalCompletion {
         await gate.acquire()
@@ -71,9 +72,14 @@ extension APIServer {
         guard await engine.ensureLoaded(spec) else { throw LocalCompletionError.loadFailed(spec) }
         return try await Self.runToolLoop(
             turns: turns, spec: spec, maxTokens: maxTokens, tools: tools,
+            responseFormat: responseFormat,
             generate: { [engine] turns, options in try await engine.generate(turns: turns, options: options) },
             onText: onText, onToolUse: onToolUse)
     }
+
+    /// What a model says instead of guessing, and what the MCP result reports as
+    /// `insufficient`, so an agent can tell "not in the material" from an answer.
+    static let insufficientMarker = "INSUFFICIENT:"
 
     /// How many tool calls a single answer may make. Six is enough to list, grep, read two
     /// files and check a page; a model that needs more is lost rather than thorough, and on
@@ -88,7 +94,7 @@ extension APIServer {
     /// not the conversation again.
     static func runToolLoop(
         turns initial: [EngineTurn], spec: ModelSpec, maxTokens: Int, tools: LocalTools?,
-        thinking: Bool = false,
+        thinking: Bool = false, responseFormat: ResponseFormat? = nil,
         generate: (_ turns: [EngineTurn], _ options: GenerationOptions) async throws -> AsyncStream<EngineEvent>,
         onText: ((String) -> Void)?, onReasoning: ((String) -> Void)? = nil,
         onToolUse: ((ToolUse) -> Void)?
@@ -113,7 +119,9 @@ extension APIServer {
             do {
                 stream = try await generate(
                     turns,
-                    GenerationOptions(maxTokens: maxTokens, temperature: 0, thinking: thinking, tools: offered))
+                    GenerationOptions(
+                        maxTokens: maxTokens, temperature: 0, thinking: thinking, tools: offered,
+                        responseFormat: responseFormat))
             } catch {
                 throw LocalCompletionError.engine(error.localizedDescription)
             }
@@ -187,8 +195,9 @@ extension APIServer {
         // grep. So the hint says outright which questions need the tools.
         var hint = "You can call tools to look things up before you answer. When a question is "
             + "about the files in the working folder or about a web page, call the tools and "
-            + "answer from what they return; never guess what a file or a page says. Answer "
-            + "anything else directly."
+            + "answer from what they return; never guess what a file or a page says. If they do "
+            + "not contain the answer, reply `\(insufficientMarker)` followed by what is missing. "
+            + "Answer anything else directly."
         if let workspace = tools.workspace {
             hint += " File tools work inside the folder \(workspace.root.path); paths are relative to it."
         }

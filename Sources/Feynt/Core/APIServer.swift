@@ -1,4 +1,5 @@
 import Foundation
+import MLXLMCommon
 import SwiftUI
 
 /// Cumulative counters served at `/metrics` — the same numbers the tray shows.
@@ -203,6 +204,10 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
                 ])
             return
         }
+        if let formatError = parsed.formatError {
+            responder.sendJSON(status: 400, object: ["error": ["message": formatError]])
+            return
+        }
         if let imageError = parsed.imageError {
             responder.sendJSON(status: 400, object: ["error": ["message": imageError]])
             return
@@ -267,7 +272,7 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
             maxTokens: request.maxTokens,
             temperature: request.temperature,
             thinking: request.thinking ?? settings.thinkingByDefault,
-            tools: request.tools)
+            tools: request.tools, responseFormat: request.responseFormat)
 
         let stream: AsyncStream<EngineEvent>
         do {
@@ -404,6 +409,9 @@ private struct ChatRequest {
     /// Set when an image part could not be read, so the request is refused with the reason
     /// rather than answered as if the picture were not there.
     private(set) var imageError: String?
+    /// `response_format`, decoded by mac-mlx's decoder; `formatError` when it is unusable.
+    private(set) var responseFormat: ResponseFormat?
+    private(set) var formatError: String?
 
     /// OpenAI messages carry either a string or a list of typed parts, and real clients
     /// send both: pi puts its system prompt in a string and the user's turn in
@@ -464,6 +472,16 @@ private struct ChatRequest {
         thinking = kwargs?["enable_thinking"] as? Bool
         // Passed to the chat template as sent. Rewriting the schema here would mean this app
         // deciding how each model wants tools described, which is the template's job.
+        if let raw = root["response_format"],
+            let data = try? JSONSerialization.data(withJSONObject: raw)
+        {
+            do {
+                responseFormat = try ResponseFormatDecoder.decode(
+                    JSONDecoder().decode(JSONValue.self, from: data))
+            } catch {
+                formatError = "response_format: \(error.localizedDescription)"
+            }
+        }
         let declared = root["tools"] as? [[String: any Sendable]]
         tools = (declared?.isEmpty ?? true) ? nil : declared
     }

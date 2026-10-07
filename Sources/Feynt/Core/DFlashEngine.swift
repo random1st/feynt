@@ -256,7 +256,7 @@ actor DFlashEngine: InferenceEngine {
         // The DFlash loop accepts a draft when it matches the target's argmax; speculative
         // sampling is not implemented yet, so anything but greedy has to take the MLX path or
         // the requested temperature would be silently ignored.
-        guard let generator, options.temperature <= 0 else {
+        guard let generator, options.temperature <= 0, options.responseFormat == nil else {
             return try await fallback.generate(turns: turns, options: options)
         }
 

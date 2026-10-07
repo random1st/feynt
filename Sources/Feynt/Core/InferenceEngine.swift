@@ -79,6 +79,9 @@ struct GenerationOptions: Sendable {
     /// The model's cap on prompt plus reply, from its catalog entry; checked once the
     /// prompt is tokenised, since only then is its length known.
     var contextLimit: Int? = nil
+    /// A JSON schema (or plain JSON) the answer must follow, enforced token by token. Such a
+    /// request takes the plain MLX path; see `MLXEngine.constrained`.
+    var responseFormat: ResponseFormat? = nil
 }
 
 enum EngineError: LocalizedError {

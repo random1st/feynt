@@ -1,4 +1,5 @@
 import Foundation
+import MLXLMCommon
 
 /// Feynt as an MCP server: the local model, and the models on disk, as tools any MCP host
 /// can call - Claude Code, Codex, an IDE.
@@ -63,10 +64,24 @@ extension APIServer {
         }
 
         let modern = requested != nil
+        // A client that sends a progress token on a tool call gets the answer as an SSE
+        // stream: progress notifications while the model works, then the result.
+        let progressToken = (params["_meta"] as? [String: Any])?["progressToken"]
+        let progress = progressToken.flatMap { token -> MCPProgress? in
+            guard method == "tools/call",
+                (request.headers["accept"] ?? "").contains("text/event-stream")
+            else { return nil }
+            return MCPProgress(token: token, responder: responder)
+        }
         let task = Task { @MainActor in
+            progress?.start()
             let (status, payload) = await self.dispatchMCP(
-                method: method, params: params, id: id, modern: modern)
-            responder.sendJSON(status: status, object: payload)
+                method: method, params: params, id: id, modern: modern, progress: progress)
+            if let progress {
+                progress.finish(with: payload)
+            } else {
+                responder.sendJSON(status: status, object: payload)
+            }
         }
         // A client that hangs up no longer wants the answer. Cancelling the task stops the
         // generation itself - `completeLocally` reads the engine's stream, and the stream
@@ -75,7 +90,7 @@ extension APIServer {
     }
 
     private func dispatchMCP(
-        method: String, params: [String: Any], id: Any, modern: Bool
+        method: String, params: [String: Any], id: Any, modern: Bool, progress: MCPProgress? = nil
     ) async -> (Int, [String: Any]) {
         switch method {
         case "initialize":
@@ -110,7 +125,7 @@ extension APIServer {
             guard Self.mcpTools.contains(where: { $0["name"] as? String == name }) else {
                 return (200, Self.rpcError(id: id, code: -32602, message: "Unknown tool: \(name)"))
             }
-            return (200, Self.mcpResult(id: id, await callTool(name, arguments)))
+            return (200, Self.mcpResult(id: id, await callTool(name, arguments, progress: progress)))
         default:
             // The current revision asks for 404 so a client can tell an unknown method on a
             // modern server from a server that has no modern endpoint at all.
@@ -186,7 +201,9 @@ extension APIServer {
                 + "suits drafts, boilerplate, summaries and second opinions. The model can look "
                 + "things up on its own - fetch a public page, and read or search files in a "
                 + "workspace folder you name - but it does not write or run anything. It reads "
-                + "images passed in `images`. Greedy decoding.",
+                + "images passed in `images`. Pass `files` to have Feynt read files for it, and "
+                + "`json_schema` for an answer guaranteed to parse. A model that cannot answer from "
+                + "what it was given says `INSUFFICIENT:`, flagged as `insufficient`. Greedy decoding.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
@@ -209,6 +226,19 @@ extension APIServer {
                         "type": "boolean",
                         "description": "Let the model use its read-only tools (web_fetch, and the "
                             + "file tools when a workspace is given). Default true.",
+                    ],
+                    "files": [
+                        "type": "array", "items": ["type": "string"],
+                        "description": "Paths Feynt reads and hands to the model with the prompt - "
+                            + "text files, and images by their bytes. Absolute, or relative to "
+                            + "`workspace`. Keeps the contents out of your own context; prefer it "
+                            + "to asking the model to go and find them.",
+                    ],
+                    "json_schema": [
+                        "type": "object",
+                        "description": "A JSON Schema the answer must follow, enforced token by "
+                            + "token; the result also carries the parsed value in "
+                            + "`structuredContent.json`. Turns the model's tools off.",
                     ],
                     "images": [
                         "type": "array",
@@ -235,7 +265,9 @@ extension APIServer {
         ["name": "feynt", "title": "Feynt", "version": appVersion]
     }
 
-    private func callTool(_ name: String, _ arguments: [String: Any]) async -> [String: Any] {
+    private func callTool(
+        _ name: String, _ arguments: [String: Any], progress: MCPProgress? = nil
+    ) async -> [String: Any] {
         do {
             switch name {
             case "list_models":
@@ -250,6 +282,11 @@ extension APIServer {
                         // that is not in memory, and an agent would expect `generate` to be
                         // instant on it.
                         "active": loaded && engine.activeModel?.id == spec.id,
+                        "bestFor": spec.bestFor,
+                        "sizeGB": (Double(spec.totalApproximateBytes) / 1e8).rounded() / 10,
+                        "contextTokens": spec.contextLimit ?? Self.contextLength(of: spec) as Any,
+                        "vision": Self.hasVision(spec),
+                        "speculative": spec.drafterRepo != nil,
                     ]
                 }
                 let lines = models.map { m -> String in
@@ -257,7 +294,8 @@ extension APIServer {
                     if m["active"] as? Bool == true { flags.append("active") }
                     if m["loaded"] as? Bool == true { flags.append("loaded") }
                     flags.append(m["downloaded"] as? Bool == true ? "downloaded" : "not downloaded")
-                    return "\(m["id"]!) - \(m["title"]!) (\(flags.joined(separator: ", ")))"
+                    return "\(m["id"]!) - \(m["title"]!), \(m["sizeGB"]!) GB "
+                        + "(\(flags.joined(separator: ", "))): \(m["bestFor"]!)"
                 }
                 return Self.toolResult(lines.joined(separator: "\n"), structured: ["models": models])
 
@@ -296,30 +334,86 @@ extension APIServer {
                 }
                 let spec = try spec(named: arguments["model"] as? String)
                 let maxTokens = min(max((arguments["max_tokens"] as? Int) ?? 1024, 1), 8192)
+                let format = try Self.responseFormat(arguments["json_schema"])
+                // The folder serves two things - the model's file tools and the paths in
+                // `files` - so it is checked once, whether or not the tools are on.
+                let workspace = try localTools(
+                    enabled: true, workspace: arguments["workspace"] as? String)?.workspace
+                // A schema-bound answer is JSON from its first token, so the model cannot
+                // also call tools; it works from the prompt and the files.
+                let toolsOn = (arguments["tools"] as? Bool) ?? true
+                let tools = toolsOn && format == nil ? LocalTools(workspace: workspace) : nil
+
                 var turns: [EngineTurn] = []
                 if let system = arguments["system"] as? String, !system.isEmpty {
                     turns.append(EngineTurn(role: .system, content: system))
                 }
-                let images = try (arguments["images"] as? [[String: Any]] ?? []).map {
+                var images = try (arguments["images"] as? [[String: Any]] ?? []).map {
                     try ImageInput.decode(base64: $0["data"] as? String ?? "")
                 }
-                turns.append(EngineTurn(role: .user, content: prompt, images: images))
-                let tools = try localTools(
-                    enabled: (arguments["tools"] as? Bool) ?? true,
-                    workspace: arguments["workspace"] as? String)
+                var content = prompt
+                let paths = arguments["files"] as? [String] ?? []
+                if !paths.isEmpty {
+                    let loaded = try FileInputs.load(paths, workspace: workspace)
+                    images += loaded.images
+                    if !loaded.text.isEmpty {
+                        content = loaded.text + "\n\n" + prompt + "\n\nAnswer from the files above. If "
+                            + "they do not contain the answer, reply `\(Self.insufficientMarker)` "
+                            + "followed by what is missing."
+                    }
+                }
+                turns.append(EngineTurn(role: .user, content: content, images: images))
+
+                progress?.note("generating with \(spec.title)")
+                let started = Date()
+                var firstToken: Date?
                 let result = try await completeLocally(
-                    turns: turns, spec: spec, maxTokens: maxTokens, tools: tools)
-                return Self.toolResult(result.text, structured: [
+                    turns: turns, spec: spec, maxTokens: maxTokens, tools: tools,
+                    responseFormat: format,
+                    onText: { chunk in
+                        if firstToken == nil { firstToken = Date() }
+                        progress?.generated(chunk)
+                    },
+                    onToolUse: { use in progress?.note("tool \(use.call.name)") })
+                let seconds = Date().timeIntervalSince(started)
+                // The word is enough: small models drop the colon ("INSUFFICIENT").
+                let insufficient = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .uppercased().hasPrefix("INSUFFICIENT")
+                let usage: [String: Any] = [
+                    "promptTokens": result.stats.promptTokens,
+                    "cachedPromptTokens": result.stats.cachedPromptTokens,
+                    "generatedTokens": result.stats.generatedTokens,
+                    "seconds": (seconds * 100).rounded() / 100,
+                    "timeToFirstTokenSeconds": firstToken.map {
+                        ($0.timeIntervalSince(started) * 100).rounded() / 100
+                    } as Any? ?? NSNull(),
+                    "tokensPerSecond": (result.stats.tokensPerSecond * 10).rounded() / 10,
+                ]
+                var structured: [String: Any] = [
                     "text": result.text,
-                    "model": spec.repo,
+                    "model": spec.id,
+                    "repo": spec.repo,
+                    "insufficient": insufficient,
                     "toolCalls": result.toolCalls.map {
                         ["name": $0.call.name, "arguments": $0.call.argumentsJSON, "isError": $0.isError]
                     },
-                    "generatedTokens": result.stats.generatedTokens,
-                    "tokensPerSecond": result.stats.tokensPerSecond,
-                    "promptTokens": result.stats.promptTokens,
-                    "cachedPromptTokens": result.stats.cachedPromptTokens,
-                ])
+                    "usage": usage,
+                ]
+                if format != nil {
+                    structured["json"] = (try? JSONSerialization.jsonObject(
+                        with: Data(result.text.utf8), options: [.fragmentsAllowed])) ?? NSNull()
+                }
+                // The numbers go in a second content block, so the first stays exactly what
+                // the model wrote - JSON an agent can parse as it is.
+                let footer = "[\(spec.id) · \(result.stats.promptTokens) prompt + "
+                    + "\(result.stats.generatedTokens) generated tokens · "
+                    + String(format: "%.1f s · %.0f tok/s", seconds, result.stats.tokensPerSecond)
+                    + (result.toolCalls.isEmpty ? "" : " · \(result.toolCalls.count) tool calls")
+                    + (insufficient ? " · insufficient" : "") + "]"
+                return [
+                    "content": [["type": "text", "text": result.text], ["type": "text", "text": footer]],
+                    "structuredContent": structured, "isError": false,
+                ]
 
             default:
                 return Self.toolError("Unknown tool: \(name)")
@@ -332,6 +426,37 @@ extension APIServer {
     }
 
     // MARK: - Wire helpers
+
+    /// `json_schema` as a JSON Schema object, wrapped the way the OpenAI-shaped decoder
+    /// vendored from mac-mlx expects it.
+    static func responseFormat(_ raw: Any?) throws -> ResponseFormat? {
+        guard let schema = raw as? [String: Any] else { return nil }
+        let data = try JSONSerialization.data(withJSONObject: [
+            "type": "json_schema", "json_schema": ["schema": schema],
+        ])
+        do {
+            return try ResponseFormatDecoder.decode(JSONDecoder().decode(JSONValue.self, from: data))
+        } catch {
+            throw LocalCompletionError.engine("json_schema: \(error.localizedDescription)")
+        }
+    }
+
+    private static func checkpointConfig(_ spec: ModelSpec) -> [String: Any]? {
+        guard let directory = ModelResolver.installedLocation(for: spec),
+            let data = try? Data(contentsOf: directory.appending(component: "config.json"))
+        else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    private static func contextLength(of spec: ModelSpec) -> Int? {
+        guard let config = checkpointConfig(spec) else { return nil }
+        let text = config["text_config"] as? [String: Any] ?? config
+        return text["max_position_embeddings"] as? Int
+    }
+
+    private static func hasVision(_ spec: ModelSpec) -> Bool {
+        checkpointConfig(spec)?["vision_config"] != nil
+    }
 
     private static func toolResult(_ text: String, structured: [String: Any]) -> [String: Any] {
         ["content": [["type": "text", "text": text]], "structuredContent": structured, "isError": false]

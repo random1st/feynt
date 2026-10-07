@@ -54,6 +54,8 @@ struct ModelSpec: Identifiable, Hashable {
     /// the model's own. Set where a model is chosen for its memory footprint, since the KV
     /// cache and the prefill grow with the context and would otherwise spend the saving.
     var contextLimit: Int? = nil
+    /// One line for an agent choosing a model through `list_models`.
+    var bestFor: String = ""
 
     var directoryName: String {
         repo.split(separator: "/").last.map(String.init) ?? repo
@@ -91,7 +93,8 @@ enum ModelCatalog {
         repo: "orcarouter/Qwen3.8-27B-Uncensored-MLX",
         approximateBytes: 16_100_000_000,
         drafterRepo: dflash2_27B,
-        drafterApproximateBytes: 3_800_000_000)
+        drafterApproximateBytes: 3_800_000_000,
+        bestFor: "careful writing and reasoning when speed matters less; uncensored")
 
     static let stock = ModelSpec(
         id: "stock",
@@ -100,7 +103,8 @@ enum ModelCatalog {
         repo: "mlx-community/Qwen3.8-27B-4bit",
         approximateBytes: 16_000_000_000,
         drafterRepo: dflash2_27B,
-        drafterApproximateBytes: 3_700_000_000)
+        drafterApproximateBytes: 3_700_000_000,
+        bestFor: "careful writing and reasoning when speed matters less")
 
     /// Roman's daily model: a MoE that reads ~3B of its 35B parameters per token, so even
     /// its plain decode (106-109 tok/s) beats what the dense 27B reaches with speculation.
@@ -146,7 +150,8 @@ enum ModelCatalog {
         repo: "froggeric/Qwen3.6-35B-A3B-Uncensored-Heretic-MLX-4bit",
         approximateBytes: 19_600_000_000,
         drafterRepo: "incoai/Qwen3.6-35B-A3B-DFlash2",
-        drafterApproximateBytes: 1_053_000_000)
+        drafterApproximateBytes: 1_053_000_000,
+        bestFor: "the default: code, agent work, long context; fastest on code (200+ tok/s with speculation)")
 
     /// The one that fits in 8 GB: the whole process, weights and context, stays under it.
     /// For summaries and log digging on a machine that has to keep its memory for
@@ -170,7 +175,8 @@ enum ModelCatalog {
         approximateBytes: 3_030_000_000,
         drafterRepo: nil,
         drafterApproximateBytes: 0,
-        contextLimit: 56_000)
+        contextLimit: 56_000,
+        bestFor: "summaries and logs within an 8 GB budget, up to 56k tokens")
 
     /// The fast one, for the small jobs an agent hands off: summarise, extract, classify,
     /// look something up with the read-only tools. 1.7 GB, and it decodes faster than any
@@ -194,7 +200,8 @@ enum ModelCatalog {
         approximateBytes: 1_720_000_000,
         drafterRepo: nil,
         drafterApproximateBytes: 0,
-        contextLimit: 120_000)
+        contextLimit: 120_000,
+        bestFor: "the fastest: summarise, extract JSON, classify, short lookups; give it the files rather than asking it to search")
 
     static let all: [ModelSpec] = [uncensoredMoE, uncensored, stock, small, tiny]
 

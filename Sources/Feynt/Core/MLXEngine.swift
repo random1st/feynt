@@ -104,6 +104,33 @@ actor MLXEngine: InferenceEngine {
 
     // MARK: - Generation
 
+    /// Vocabulary tables for the JSON mask, built once per model: classifying every token
+    /// of a 248k vocabulary costs seconds, and a second request should not pay it again.
+    private static let vocabularyCache = TokenVocabularyCache()
+
+    /// Generation under a JSON schema, with mac-mlx's grammar mask as the logit processor.
+    /// No speculation here: the mask has to see every step's logits, and the drafter's
+    /// proposals would be verified against a distribution it never saw.
+    private static func constrained(
+        input: LMInput, parameters: GenerateParameters, context: ModelContext,
+        format: ResponseFormat
+    ) throws -> AsyncStream<Generation> {
+        var stops = context.configuration.eosTokenIds
+        if let eos = context.tokenizer.eosTokenId { stops.insert(eos) }
+        for token in context.configuration.extraEOSTokens {
+            if let id = context.tokenizer.convertTokenToId(token) { stops.insert(id) }
+        }
+        let processor = JSONConstraintProcessor(
+            format: format, inner: parameters.processor(), cache: vocabularyCache,
+            modelID: context.configuration.name, tokenizer: context.tokenizer,
+            stopTokenIDs: stops, greedy: parameters.temperature == 0)
+        let iterator = try TokenIterator(
+            input: input, model: context.model, processor: processor,
+            sampler: parameters.sampler(), prefill: parameters.prefill,
+            maxTokens: parameters.maxTokens)
+        return MLXLMCommon.generate(input: input, context: context, iterator: iterator)
+    }
+
     func generate(
         turns: [EngineTurn], options: GenerationOptions
     ) async throws -> AsyncStream<EngineEvent> {
@@ -112,16 +139,21 @@ actor MLXEngine: InferenceEngine {
         let messages = ToolBridge.messages(from: turns)
         // Qwen's chat template reads `enable_thinking`; off by default because with thinking
         // on the model can spend the whole budget reasoning and return an empty answer.
+        // A schema-constrained answer has to start at the first generated token, so it never
+        // reasons first: the mask would hold the model to JSON inside its own think block.
         let userInput = UserInput(
             chat: messages, tools: options.tools,
-            additionalContext: ["enable_thinking": options.thinking])
+            additionalContext: ["enable_thinking": options.thinking && options.responseFormat == nil])
         let input = try await context.processor.prepare(input: userInput)
         try options.checkContext(promptTokens: input.text.tokens.size)
         let parameters = GenerateParameters(
             maxTokens: options.maxTokens, temperature: options.temperature, topP: 0.8)
 
         let raw: AsyncStream<Generation>
-        if let drafter {
+        if let format = options.responseFormat {
+            raw = try Self.constrained(
+                input: input, parameters: parameters, context: context, format: format)
+        } else if let drafter {
             raw = try MLXLMCommon.generate(
                 input: input, parameters: parameters, context: context,
                 mtpDrafter: drafter, blockSize: draftBlockSize)

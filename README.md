@@ -252,7 +252,29 @@ revisions answered too, since most hosts in use still open with it. Four tools:
 `list_models` (what is downloaded, loaded and active), `load_model`, `unload_model`, and
 `generate` (a prompt, an optional system prompt and model, an answer). `generate` lets the
 model use the tools above: `workspace` names the folder it may read, `tools: false` turns
-them off; the calls it made come back in `structuredContent.toolCalls`. Downloading is
+them off; the calls it made come back in `structuredContent.toolCalls`.
+
+What `generate` takes from an agent, beyond the prompt:
+
+- `files` — paths Feynt reads itself and puts in front of the prompt (text), or sends to
+  the vision tower (images, recognised by their bytes). The contents never pass through
+  the calling agent's context, and a small model gets the material up front instead of
+  having to decide to look for it. Absolute paths, or relative to `workspace`; credential
+  locations are refused as everywhere else.
+- `json_schema` — a JSON Schema the answer must follow, enforced token by token with the
+  grammar mask from [mac-mlx](https://github.com/magicnight/mac-mlx) (Apache 2.0, vendored in
+  `Sources/Feynt/Vendor/MacMLXConstraint`). The parsed value comes back in
+  `structuredContent.json`. Such a request decodes without speculation.
+- A model that cannot answer from what it was given replies `INSUFFICIENT: …`, and the
+  result says `insufficient: true`, so a missing fact is not dressed up as an answer.
+
+Every result reports `usage` — prompt and generated tokens, seconds, time to first token,
+tok/s — in `structuredContent`, and as a one-line second content block, so the answer
+itself stays exactly what the model wrote. A client that sends a `progressToken` gets the
+result as an SSE stream with progress notifications: about once a second while tokens
+arrive, and every ten seconds while a long prompt is being read, so a slow local answer
+does not trip the caller's timeout. `list_models` says what each model is for, its size,
+context, and whether it reads images or speculates. Downloading is
 deliberately not a tool: a model is 16–20 GB, which is not something an agent should start
 without being asked.
 

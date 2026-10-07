@@ -47,5 +47,8 @@ let package = Package(
 // tests exist.
 if ProcessInfo.processInfo.environment["FEYNT_TESTS"] == "1" {
     package.targets.append(
-        .testTarget(name: "FeyntTests", dependencies: ["Feynt"], path: "Tests/FeyntTests"))
+        .testTarget(
+            name: "FeyntTests", dependencies: ["Feynt"], path: "Tests/FeyntTests",
+            // Schema fixtures of the structured-output tests vendored from mac-mlx.
+            resources: [.copy("MacMLXConstraint/Fixtures")]))
 }
