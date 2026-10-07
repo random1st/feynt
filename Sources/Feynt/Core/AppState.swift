@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import MLX
 import SwiftUI
 
 /// Single root object wired into every view. A shared instance exists so the app delegate
@@ -16,6 +17,13 @@ final class AppState: ObservableObject {
     let updates: UpdateChecker
 
     private init() {
+        // MLX keeps freed buffers for reuse, and with no cap that cache grows with every
+        // long prompt: a 36k-token log left the process at 93 GB, 89 of it cache, while
+        // the live arrays never passed 5.4. Capped at a gigabyte the same run peaked at
+        // 6.3 GB, and neither decode nor prefill moved - 72-73 tok/s and ~1070 tok/s
+        // reading on the 4B, 243-258 tok/s on the MoE either way. Set before any model
+        // loads, so it covers the headless diagnostics too.
+        MLX.Memory.cacheLimit = 1 << 30
         let settings = AppSettings()
         // DFlash 2 drives generation; the MLXEngine handed to it is the fallback for the
         // requests its greedy loop does not serve, and it shares the same loaded weights.

@@ -1,5 +1,6 @@
 import DFlashKit
 import Foundation
+import MLX
 
 /// One headless turn through the real engine stack, behind `Feynt --generate <id> [prompt]`.
 ///
@@ -140,6 +141,12 @@ private var probeTools: [[String: any Sendable]]? {
                     format: "--- %d tokens · %.1f tok/s · prompt %d at %.1f tok/s%@ ---",
                     stats.generatedTokens, stats.tokensPerSecond,
                     stats.promptTokens, stats.promptTokensPerSecond, accepted))
+                // Memory is a budget for the small model and a crash risk for the large
+                // ones, and the process footprint alone hides whether it went to live
+                // arrays or to MLX's cache of freed buffers.
+                print(String(format: "--- MLX memory: peak %.2f GB, active %.2f GB, cache %.2f GB ---",
+                    Double(MLX.Memory.peakMemory) / 1e9, Double(MLX.Memory.activeMemory) / 1e9,
+                    Double(MLX.Memory.cacheMemory) / 1e9))
                 // What a round is spent on. Speculation here pays only from about 1.9
                 // accepted drafts, because the round costs several plain forwards - so
                 // the split between drafting and verifying is the number that decides
