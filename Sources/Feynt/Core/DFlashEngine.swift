@@ -5,6 +5,8 @@ import MLX
 import MLXHuggingFace
 import MLXLLM
 import MLXLMCommon
+import MLXVLM
+import MLXNN
 import Tokenizers
 
 /// In-process engine with DFlash 2 speculation.
@@ -20,6 +22,10 @@ actor DFlashEngine: InferenceEngine {
     private let fallback: MLXEngine
     private var context: ModelContext?
     private var generator: DFlashSpeculativeGenerator?
+    /// The same checkpoint loaded as a vision model, sharing the text model's arrays, for
+    /// the requests that carry an image. `nil` when the checkpoint has no vision tower.
+    /// Speculation is a text-model path, so an image request decodes plainly.
+    private var vision: MLXEngine?
     /// EOS ids for the loaded target, resolved once at load time.
     private var stopTokens: Set<Int> = []
 
@@ -47,7 +53,9 @@ actor DFlashEngine: InferenceEngine {
 
         var loaded: ModelContext
         do {
-            loaded = try await loadModel(from: modelDirectory, using: #huggingFaceTokenizerLoader())
+            // The text factory by name: with MLXVLM linked the generic loader picks the
+        // vision model for a multimodal checkpoint, and DFlash taps the text model.
+        loaded = try await LLMModelFactory.shared.load(from: modelDirectory, using: #huggingFaceTokenizerLoader())
         } catch {
             throw EngineError.loadFailed(error.localizedDescription)
         }
@@ -65,6 +73,34 @@ actor DFlashEngine: InferenceEngine {
         prefixCache = PrefixCache(slots: 4, byteLimit: 12 << 30)
         generator = Self.makeGenerator(
             context: loaded, drafterDirectory: drafterDirectory, prefixCache: prefixCache)
+        vision = await Self.loadVision(directory: modelDirectory, text: loaded)
+    }
+
+    /// The vision half of a multimodal checkpoint, built over the resident text model. A
+    /// failure costs images, never text: it is logged and the model serves text as before.
+    private static func loadVision(directory: URL, text: ModelContext) async -> MLXEngine? {
+        guard let data = try? Data(contentsOf: directory.appending(component: "config.json")),
+            let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            config["vision_config"] != nil
+        else { return nil }
+        guard let module = text.model as? Module else { return nil }
+        let before = MLX.Memory.activeMemory
+        let started = Date()
+        do {
+            let context = try await VLMModelFactory.shared.loadSharingLanguageModel(
+                directory: directory, languageModel: module, tokenizer: text.tokenizer,
+                configuration: text.configuration)
+            let engine = MLXEngine()
+            await engine.adopt(context: context)
+            AppLog.write(String(
+                format: "loaded vision for %@ in %.1fs, +%.2f GB",
+                directory.lastPathComponent, Date().timeIntervalSince(started),
+                Double(MLX.Memory.activeMemory - before) / 1e9))
+            return engine
+        } catch {
+            AppLog.write("vision not loaded for \(directory.lastPathComponent): \(error.localizedDescription)")
+            return nil
+        }
     }
 
     /// How many tokens a round may draft. `nil` - the default - lets the generator grow
@@ -193,6 +229,10 @@ actor DFlashEngine: InferenceEngine {
         context = nil
         generator = nil
         stopTokens = []
+        if let vision {
+            await vision.unload()
+            self.vision = nil
+        }
         // The snapshots hold GPU buffers of their own; leaving them behind would defeat the
         // point of unloading.
         prefixCache.clear()
@@ -208,6 +248,10 @@ actor DFlashEngine: InferenceEngine {
         turns: [EngineTurn], options: GenerationOptions
     ) async throws -> AsyncStream<EngineEvent> {
         guard let context else { throw EngineError.notLoaded }
+        if turns.contains(where: { !$0.images.isEmpty }) {
+            guard let vision else { throw EngineError.noVision }
+            return try await vision.generate(turns: turns, options: options)
+        }
 
         // The DFlash loop accepts a draft when it matches the target's argmax; speculative
         // sampling is not implemented yet, so anything but greedy has to take the MLX path or

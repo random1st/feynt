@@ -151,7 +151,8 @@ Models live in `~/Library/Application Support/Feynt/models`.
 - Menu bar: state, live tok/s, accepted tokens per round, the port and a copy-URL button,
   load and unload, re-download, chat, log, idle timeout.
 - Chat with streaming and a separate collapsible reasoning area, a model switcher and an
-  unload button in its top bar.
+  unload button in its top bar. Images attach with the paperclip or by dropping them on the
+  message field.
 - Model tools, read-only on purpose: `read_file`, `list_files` and `grep` inside a folder you
   pick, and `web_fetch` for public pages. Nothing writes or runs — a local model is not
   trusted with that, and in agent mode nobody is there to approve it. The folder is the
@@ -190,8 +191,8 @@ dependencies. Requests are served strictly one at a time, because the GPU is not
 
 `messages`, `tools`, `max_tokens`, `stream`, `temperature` and
 `chat_template_kwargs.enable_thinking` are honoured; unknown fields are ignored. Message
-content may be a string or a list of typed parts. Reasoning arrives separately, in
-`reasoning_content`.
+content may be a string or a list of typed parts, `image_url` parts included (see
+[Vision](#vision)). Reasoning arrives separately, in `reasoning_content`.
 
 Tool calls are OpenAI-shaped in both directions: `tools` go in, `tool_calls` come back on
 the assistant message, and a `tool` message carries the result of one. Each model speaks
@@ -217,6 +218,21 @@ the whole conversation. The speculative loop now decodes tool calls itself, so t
 request sees: sustained decode drops from 64-68 to 47-49 tok/s, so the change wins up to
 roughly 500 generated tokens per turn and draws level past that. An agent's turns are far
 shorter than that.
+
+## Vision
+
+Every model in the catalog reads images: in the chat (the paperclip, or drop a picture on
+the message field), over the OpenAI endpoint as `image_url` parts, through MCP `generate`
+as `images: [{data, mimeType}]`, and over A2A as a `raw` part with an image `mediaType`.
+Images go inline, base64. A URL to an image is refused rather than fetched, because a
+server that fetches what a client names can be pointed at the local network.
+
+The checkpoints carry a vision tower that a text-only load skips. Feynt loads it next to
+the resident text model and points the vision model's language-model weights at the text
+model's own arrays, so vision costs the tower alone — 0.89 GB on the 35B-A3B, 0.92 GB on
+the 27Bs, 0.67 GB on the 4B — read in about 0.2 s. The text model stays the one the DFlash
+drafter taps, so text keeps its speed; a request with an image decodes without
+speculation, about 90 tok/s on the 35B-A3B and 22 on a 27B.
 
 ## MCP and A2A
 

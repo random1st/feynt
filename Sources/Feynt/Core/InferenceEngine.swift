@@ -14,6 +14,8 @@ struct EngineTurn: Sendable, Equatable {
     /// For a `.tool` turn: the call it answers, and the tool's name.
     var toolCallID: String? = nil
     var toolName: String? = nil
+    /// Encoded images (PNG, JPEG, anything Core Image reads) attached to a user turn.
+    var images: [Data] = []
 }
 
 /// A tool call in the shape both the API and the chat template want. Arguments stay as the
@@ -84,6 +86,7 @@ enum EngineError: LocalizedError {
     case modelMissing(String)
     case loadFailed(String)
     case contextTooLong(prompt: Int, reply: Int, limit: Int)
+    case noVision
 
     var errorDescription: String? {
         switch self {
@@ -93,6 +96,9 @@ enum EngineError: LocalizedError {
             return "Model directory not found: \(path)"
         case .loadFailed(let reason):
             return "Could not load the model: \(reason)"
+        case .noVision:
+            return "This model cannot read images: its checkpoint has no vision tower, or the "
+                + "tower did not load (Feynt's log has the reason)."
         case .contextTooLong(let prompt, let reply, let limit):
             return "The prompt is \(prompt) tokens and the reply may take \(reply) more, but this "
                 + "model is limited to \(limit) tokens to stay within its memory budget. Shorten "

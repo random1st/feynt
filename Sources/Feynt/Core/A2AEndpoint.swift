@@ -90,7 +90,7 @@ extension APIServer {
             "version": appVersion,
             "documentationUrl": "https://github.com/random1st/feynt",
             "capabilities": ["streaming": true, "pushNotifications": false, "extendedAgentCard": false],
-            "defaultInputModes": ["text/plain"],
+            "defaultInputModes": ["text/plain", "image/png", "image/jpeg", "image/webp"],
             "defaultOutputModes": ["text/plain"],
             "skills": [
                 [
@@ -102,8 +102,9 @@ extension APIServer {
                         + "without it the active model answers. The model may look things up "
                         + "with read-only tools: it fetches public pages, and reads and searches "
                         + "files in `metadata.workspace` when that names a folder. "
-                        + "`metadata.tools: false` turns them off.",
-                    "tags": ["local", "private", "offline", "code", "text"],
+                        + "`metadata.tools: false` turns them off. Images are read when sent "
+                        + "as `raw` parts with an image `mediaType`; `url` parts are not fetched.",
+                    "tags": ["local", "private", "offline", "code", "text", "vision"],
                     "examples": [
                         "Write a Swift function that parses an ISO-8601 date.",
                         "Summarise this diff in three sentences.",
@@ -205,6 +206,7 @@ extension APIServer {
     private struct A2ARequest {
         let message: [String: Any]
         let text: String
+        let images: [Data]
         let contextId: String
         let spec: ModelSpec
         let tools: LocalTools?
@@ -222,8 +224,24 @@ extension APIServer {
         }
         let parts = message["parts"] as? [[String: Any]] ?? []
         let text = parts.compactMap { $0["text"] as? String }.joined(separator: "\n")
-        guard !text.isEmpty else {
-            return .failure(A2AFault(-32005, "only text parts are supported"))
+        // Images come as `raw` bytes with an image media type. A `url` part is refused, not
+        // fetched: following a URL an agent names would let it reach the local network.
+        var images: [Data] = []
+        for part in parts where part["text"] == nil {
+            guard let raw = part["raw"] as? String,
+                (part["mediaType"] as? String ?? "image/").hasPrefix("image/")
+            else {
+                return .failure(A2AFault(
+                    -32005, "only text parts and images as raw bytes are supported"))
+            }
+            do {
+                images.append(try ImageInput.decode(base64: raw))
+            } catch {
+                return .failure(A2AFault(-32602, error.localizedDescription))
+            }
+        }
+        guard !text.isEmpty || !images.isEmpty else {
+            return .failure(A2AFault(-32005, "the message has no text and no image"))
         }
         if let taskId = message["taskId"] as? String, !taskId.isEmpty {
             guard let task = a2a.tasks[taskId] else { return .failure(A2AFault(-32001, "Task not found")) }
@@ -252,7 +270,7 @@ extension APIServer {
             return .failure(A2AFault(-32602, error.localizedDescription))
         }
         return .success(A2ARequest(
-            message: message, text: text, contextId: contextId, spec: spec, tools: tools,
+            message: message, text: text, images: images, contextId: contextId, spec: spec, tools: tools,
             maxTokens: min(max((metadata["maxTokens"] as? Int) ?? 2048, 1), 8192),
             returnImmediately: configuration["returnImmediately"] as? Bool ?? false,
             historyLength: configuration["historyLength"] as? Int))
@@ -272,7 +290,7 @@ extension APIServer {
         a2a.store(task)
 
         let prior = a2a.contexts[request.contextId] ?? []
-        let turns = prior + [EngineTurn(role: .user, content: request.text)]
+        let turns = prior + [EngineTurn(role: .user, content: request.text, images: request.images)]
         let worker = Task { @MainActor [weak self] in
             guard let self else { return }
             do {

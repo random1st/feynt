@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ChatView: View {
     @EnvironmentObject private var state: AppState
@@ -177,7 +178,18 @@ struct ChatView: View {
                 SpeedReadout(engine: engine)
                 Button("Clear", action: chat.clear).disabled(chat.messages.isEmpty)
             }
+            if !chat.attachments.isEmpty {
+                AttachmentStrip(images: chat.attachments) { index in
+                    chat.attachments.remove(at: index)
+                }
+            }
             HStack(alignment: .bottom, spacing: 8) {
+                Button(action: pickImages) {
+                    Image(systemName: "paperclip")
+                }
+                .buttonStyle(.borderless)
+                .disabled(chat.isStreaming)
+                .help("Attach images. You can also drop them on the message field.")
                 // A TextEditor swallows Return as a newline, so a plain Enter never sent
                 // anything and the only way out was a menu-less Cmd+Return nobody guesses.
                 // Return now sends, Shift+Return still breaks the line.
@@ -187,6 +199,9 @@ struct ChatView: View {
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
                             .stroke(Color.secondary.opacity(0.3)))
+                    .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                        dropImages(providers)
+                    }
                     .onKeyPress(.return, phases: .down) { press in
                         guard !press.modifiers.contains(.shift) else { return .ignored }
                         guard chat.canSend else { return .handled }
@@ -203,6 +218,65 @@ struct ChatView: View {
             }
         }
         .padding(12)
+    }
+
+    private func pickImages() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.message = "Images for the model to look at"
+        guard panel.runModal() == .OK else { return }
+        chat.attach(panel.urls)
+    }
+
+    private func dropImages(_ providers: [NSItemProvider]) -> Bool {
+        for provider in providers {
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                guard let url else { return }
+                Task { @MainActor in chat.attach([url]) }
+            }
+        }
+        return !providers.isEmpty
+    }
+}
+
+/// Thumbnails of the images about to be sent, each with a way to take it back.
+private struct AttachmentStrip: View {
+    let images: [Data]
+    let remove: (Int) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 8) {
+                ForEach(Array(images.enumerated()), id: \.offset) { index, data in
+                    ZStack(alignment: .topTrailing) {
+                        Thumbnail(data: data, side: 56)
+                        Button { remove(index) } label: {
+                            Image(systemName: "xmark.circle.fill")
+                        }
+                        .buttonStyle(.borderless)
+                        .offset(x: 6, y: -6)
+                    }
+                }
+            }
+            .padding(.top, 6)
+        }
+    }
+}
+
+private struct Thumbnail: View {
+    let data: Data
+    let side: CGFloat
+
+    var body: some View {
+        if let image = NSImage(data: data) {
+            Image(nsImage: image)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: side, height: side)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
     }
 }
 
@@ -272,6 +346,14 @@ private struct MessageBubble: View {
                     Label("Reasoning", systemImage: "brain")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
+            }
+
+            if !message.images.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(Array(message.images.enumerated()), id: \.offset) { _, data in
+                        Thumbnail(data: data, side: 120)
+                    }
                 }
             }
 

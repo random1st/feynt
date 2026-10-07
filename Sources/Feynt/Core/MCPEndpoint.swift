@@ -185,7 +185,8 @@ extension APIServer {
             "description": "Answer a prompt with a local model on this Mac. Private and free; "
                 + "suits drafts, boilerplate, summaries and second opinions. The model can look "
                 + "things up on its own - fetch a public page, and read or search files in a "
-                + "workspace folder you name - but it does not write or run anything. Greedy decoding.",
+                + "workspace folder you name - but it does not write or run anything. It reads "
+                + "images passed in `images`. Greedy decoding.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
@@ -208,6 +209,19 @@ extension APIServer {
                         "type": "boolean",
                         "description": "Let the model use its read-only tools (web_fetch, and the "
                             + "file tools when a workspace is given). Default true.",
+                    ],
+                    "images": [
+                        "type": "array",
+                        "description": "Pictures for the model to look at, each base64 in "
+                            + "`data` with its `mimeType`, the shape of MCP image content. "
+                            + "Inline only; URLs are not fetched.",
+                        "items": [
+                            "type": "object",
+                            "properties": [
+                                "data": ["type": "string"], "mimeType": ["type": "string"],
+                            ],
+                            "required": ["data"],
+                        ],
                     ],
                 ],
                 "required": ["prompt"],
@@ -286,7 +300,10 @@ extension APIServer {
                 if let system = arguments["system"] as? String, !system.isEmpty {
                     turns.append(EngineTurn(role: .system, content: system))
                 }
-                turns.append(EngineTurn(role: .user, content: prompt))
+                let images = try (arguments["images"] as? [[String: Any]] ?? []).map {
+                    try ImageInput.decode(base64: $0["data"] as? String ?? "")
+                }
+                turns.append(EngineTurn(role: .user, content: prompt, images: images))
                 let tools = try localTools(
                     enabled: (arguments["tools"] as? Bool) ?? true,
                     workspace: arguments["workspace"] as? String)

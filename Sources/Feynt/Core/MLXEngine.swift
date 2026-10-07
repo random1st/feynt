@@ -34,7 +34,9 @@ actor MLXEngine: InferenceEngine {
 
         let tokenizerLoader = #huggingFaceTokenizerLoader()
         do {
-            var loaded = try await loadModel(from: modelDirectory, using: tokenizerLoader)
+            // The text factory by name: with MLXVLM linked the generic loader picks the
+        // vision model for a multimodal checkpoint, and DFlash taps the text model.
+        var loaded = try await LLMModelFactory.shared.load(from: modelDirectory, using: tokenizerLoader)
             // The generation loop parses tool calls with whatever format this configuration
             // names, defaulting to `.json`. Loading from a directory leaves it nil — the
             // library only fills it for models named in its own registry — so an LFM2 model

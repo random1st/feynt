@@ -1,3 +1,4 @@
+import CoreImage
 import Foundation
 import MLXLMCommon
 
@@ -29,7 +30,11 @@ enum ToolBridge {
         turns.map { turn in
             switch turn.role {
             case .system: return .system(turn.content)
-            case .user: return .user(turn.content)
+            case .user:
+                guard !turn.images.isEmpty else { return .user(turn.content) }
+                return Chat.Message(
+                    role: .user, content: turn.content,
+                    images: turn.images.compactMap { CIImage(data: $0) }.map { .ciImage($0) })
             case .assistant:
                 guard !turn.toolCalls.isEmpty else { return .assistant(turn.content) }
                 return Chat.Message(

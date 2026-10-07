@@ -115,9 +115,17 @@ private var probeTools: [[String: any Sendable]]? {
             return Int(CommandLine.arguments[index + 1])
         } ?? 200
 
+    // `--image <path>` attaches a picture, which sends the request down the vision path.
+    let images = CommandLine.arguments.firstIndex(of: "--image")
+        .flatMap { index -> Data? in
+            guard CommandLine.arguments.count > index + 1 else { return nil }
+            return try? Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[index + 1]))
+        }
+        .map { [$0] } ?? []
+
     do {
         let stream = try await engine.generate(
-            turns: [EngineTurn(role: .user, content: prompt)],
+            turns: [EngineTurn(role: .user, content: prompt, images: images)],
             options: GenerationOptions(
                 maxTokens: maxTokens, temperature: 0, thinking: false, tools: tools))
         var text = "", reasoning = ""

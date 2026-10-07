@@ -203,6 +203,10 @@ final class APIServer: ObservableObject, EngineLifecycleObserver {
                 ])
             return
         }
+        if let imageError = parsed.imageError {
+            responder.sendJSON(status: 400, object: ["error": ["message": imageError]])
+            return
+        }
         guard let spec = resolveModel(parsed.model) else {
             responder.sendJSON(
                 status: 404,
@@ -397,6 +401,9 @@ private struct ChatRequest {
     let thinking: Bool?
     let model: String?
     let tools: [[String: any Sendable]]?
+    /// Set when an image part could not be read, so the request is refused with the reason
+    /// rather than answered as if the picture were not there.
+    private(set) var imageError: String?
 
     /// OpenAI messages carry either a string or a list of typed parts, and real clients
     /// send both: pi puts its system prompt in a string and the user's turn in
@@ -405,8 +412,7 @@ private struct ChatRequest {
     /// the chat template rejects outright, so the request came back as a Jinja exception
     /// rather than as anything a client could act on.
     ///
-    /// Non-text parts (images, audio) are skipped: this engine is text-only, and a caption
-    /// invented for an image would be worse than an answer that ignores it.
+    /// Images are read separately, by ``images(from:)``; audio is skipped.
     private static func text(from content: Any?) -> String? {
         if let text = content as? String { return text }
         guard let parts = content as? [[String: Any]] else { return nil }
@@ -422,20 +428,29 @@ private struct ChatRequest {
             return nil
         }
         let rawMessages = root["messages"] as? [[String: Any]] ?? []
+        var imageError: String?
         turns = rawMessages.compactMap { entry in
             let role = EngineTurn.Role(rawValue: entry["role"] as? String ?? "user") ?? .user
             let calls = Self.toolCalls(from: entry["tool_calls"])
+            var images: [Data] = []
+            do {
+                images = try Self.images(from: entry["content"])
+            } catch {
+                imageError = error.localizedDescription
+            }
             // An assistant turn that only asked for tools carries no content, and a tool
             // result can legitimately be an empty string — dropping either would erase a
-            // step of the agent loop, so only a contentless plain turn is skipped.
+            // step of the agent loop, so only a contentless plain turn is skipped. A turn
+            // that is only a picture is a question too.
             guard let content = Self.text(from: entry["content"])
-                ?? ((!calls.isEmpty || role == .tool) ? "" : nil)
+                ?? ((!calls.isEmpty || role == .tool || !images.isEmpty) ? "" : nil)
             else { return nil }
             return EngineTurn(
                 role: role, content: content, toolCalls: calls,
                 toolCallID: entry["tool_call_id"] as? String,
-                toolName: entry["name"] as? String)
+                toolName: entry["name"] as? String, images: role == .user ? images : [])
         }
+        self.imageError = imageError
         guard !turns.isEmpty else { return nil }
 
         maxTokens = (root["max_tokens"] as? Int) ?? (root["max_completion_tokens"] as? Int) ?? 4096
@@ -451,6 +466,19 @@ private struct ChatRequest {
         // deciding how each model wants tools described, which is the template's job.
         let declared = root["tools"] as? [[String: any Sendable]]
         tools = (declared?.isEmpty ?? true) ? nil : declared
+    }
+
+    /// `image_url` parts, as OpenAI clients send them: `{"url": "data:image/png;base64,…"}`.
+    /// Only inline images are taken. Fetching a URL a client names would make this server a
+    /// way to reach whatever that URL points at, local network included.
+    private static func images(from content: Any?) throws -> [Data] {
+        guard let parts = content as? [[String: Any]] else { return [] }
+        return try parts.compactMap { part -> Data? in
+            guard part["type"] as? String == "image_url" else { return nil }
+            let raw = (part["image_url"] as? [String: Any])?["url"] as? String
+                ?? part["image_url"] as? String ?? ""
+            return try ImageInput.decode(raw)
+        }
     }
 
     /// Tool calls from an assistant turn the client is replaying back to us.

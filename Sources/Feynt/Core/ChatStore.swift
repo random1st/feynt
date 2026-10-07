@@ -14,9 +14,13 @@ struct ChatMessage: Identifiable, Equatable {
     var toolName: String? = nil
     var toolArguments: String? = nil
     var isError = false
+    /// Pictures attached to a user message, as encoded bytes.
+    var images: [Data] = []
 
     var engineTurn: EngineTurn {
-        EngineTurn(role: role, content: text, toolCalls: toolCalls, toolCallID: toolCallID, toolName: toolName)
+        EngineTurn(
+            role: role, content: text, toolCalls: toolCalls, toolCallID: toolCallID,
+            toolName: toolName, images: images)
     }
 }
 
@@ -25,6 +29,8 @@ struct ChatMessage: Identifiable, Equatable {
 final class ChatStore: ObservableObject {
     @Published var messages: [ChatMessage] = []
     @Published var draft: String = ""
+    /// Images waiting to go out with the next message.
+    @Published var attachments: [Data] = []
     @Published var thinkingEnabled: Bool
     @Published private(set) var isStreaming = false
     @Published var errorMessage: String?
@@ -58,15 +64,17 @@ final class ChatStore: ObservableObject {
     }
 
     var canSend: Bool {
-        !isStreaming && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !isStreaming
+            && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
     }
 
     func send() {
         let prompt = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !prompt.isEmpty, !isStreaming else { return }
+        guard !prompt.isEmpty || !attachments.isEmpty, !isStreaming else { return }
         draft = ""
         errorMessage = nil
-        messages.append(ChatMessage(role: .user, text: prompt))
+        messages.append(ChatMessage(role: .user, text: prompt, images: attachments))
+        attachments = []
         let placeholder = ChatMessage(role: .assistant, isStreaming: true)
         messages.append(placeholder)
         isStreaming = true
@@ -170,5 +178,16 @@ final class ChatStore: ObservableObject {
         }
         errorMessage = error
         engine.generationFinished(nil)
+    }
+}
+
+extension ChatStore {
+    /// Adds pictures from files, skipping anything that is not an image. Returns whether any
+    /// was added, so a drop target can say it took the drop.
+    @discardableResult
+    func attach(_ urls: [URL]) -> Bool {
+        let images = urls.compactMap { try? ImageInput.validated(Data(contentsOf: $0)) }
+        attachments += images
+        return !images.isEmpty
     }
 }
