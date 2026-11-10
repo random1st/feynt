@@ -12,9 +12,11 @@ public final class Qwen35Runtime: @unchecked Sendable {
     public struct Config: Sendable {
         public var slotsPerLayer: Int
         public var maxContext: Int
-        public init(slotsPerLayer: Int, maxContext: Int = 8192) {
+        public var bypassFileCache: Bool
+        public init(slotsPerLayer: Int, maxContext: Int = 8192, bypassFileCache: Bool = false) {
             self.slotsPerLayer = slotsPerLayer
             self.maxContext = maxContext
+            self.bypassFileCache = bypassFileCache
         }
     }
 
@@ -67,7 +69,7 @@ public final class Qwen35Runtime: @unchecked Sendable {
         self.device = device
         self.config = config
         queue = device.makeCommandQueue()!
-        let files = FileTable()
+        let files = FileTable(bypassCache: config.bypassFileCache)
         let index = try SafetensorsIndex(directory: directory)
         resident = try ResidentWeights(index: index, include: Qwen35Names.isResident, device: device, files: files)
         var caches: [ExpertSlotCache] = []

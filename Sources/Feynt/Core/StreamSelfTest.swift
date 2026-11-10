@@ -16,7 +16,8 @@ import Tokenizers
     do {
         let started = Date()
         let tokenizer = try await #huggingFaceTokenizerLoader().load(from: directory)
-        let runtime = try Qwen35Runtime(directory: directory, config: .init(slotsPerLayer: slots))
+        let runtime = try Qwen35Runtime(directory: directory, config: .init(slotsPerLayer: slots,
+            bypassFileCache: CommandLine.arguments.contains("--no-file-cache")))
         print(String(format: "loaded in %.1fs, %.2f GB weights + slots, footprint %.2f GB",
                      Date().timeIntervalSince(started), Double(runtime.weightBytes) / 1e9, footprintGB()))
         if CommandLine.arguments.contains("--bench") {

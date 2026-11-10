@@ -222,8 +222,14 @@ public final class ExpertSlotCache: @unchecked Sendable {
 public final class FileTable: @unchecked Sendable {
     private var descriptors: [URL: Int32] = [:]
     private let lock = NSLock()
+    /// Read past the OS file cache (`F_NOCACHE`): every miss goes to the SSD, as on a Mac
+    /// with no memory to spare for caching. Off by default, because cached pages are not
+    /// the process's memory and the system takes them back when it needs them.
+    public let bypassCache: Bool
 
-    public init() {}
+    public init(bypassCache: Bool = false) {
+        self.bypassCache = bypassCache
+    }
 
     public func descriptor(for file: URL) throws -> Int32 {
         lock.lock()
@@ -231,6 +237,7 @@ public final class FileTable: @unchecked Sendable {
         if let fd = descriptors[file] { return fd }
         let fd = open(file.path, O_RDONLY | O_CLOEXEC)
         guard fd >= 0 else { throw ExpertSlotCache.Failure.read(errno: errno, part: file.lastPathComponent) }
+        if bypassCache { _ = fcntl(fd, F_NOCACHE, 1) }
         descriptors[file] = fd
         return fd
     }
