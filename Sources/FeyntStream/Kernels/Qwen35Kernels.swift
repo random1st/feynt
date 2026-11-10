@@ -33,12 +33,17 @@ kernel void qgemv(device const uchar*  base   [[buffer(0)]],
                   constant uint&       yStride[[buffer(10)]],
                   constant float*      alpha  [[buffer(11)]],
                   constant uint&       accumulate [[buffer(12)]],
+                  constant uint*       phase  [[buffer(13)]],
+                  constant uint&       want   [[buffer(14)]],
                   uint2 tg  [[threadgroup_position_in_grid]],
                   uint  sg  [[simdgroup_index_in_threadgroup]],
                   uint  lane[[thread_index_in_simdgroup]]) {
     uint row0 = tg.x * ROWS + sg * RPS;
     uint m = tg.y;
     if (row0 >= outDim) return;
+    // Hit-first split: matrices whose phase differs from `want` belong to the other pass
+    // (want 2 runs every matrix).
+    if (want < 2 && phase[m] != want) return;
     uint wordsPerRow = inDim * bits / 32;
     uint chunksPerRow = wordsPerRow / 4;
     uint perWord = 32 / bits;
