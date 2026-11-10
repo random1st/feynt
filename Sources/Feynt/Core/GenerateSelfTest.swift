@@ -29,6 +29,14 @@ private var probeTools: [[String: any Sendable]]? {
 }
 
 @MainActor func generateOnce(spec: ModelSpec, prompt: String) async {
+    if let index = CommandLine.arguments.firstIndex(of: "--stream"),
+        CommandLine.arguments.count > index + 1, let slots = Int(CommandLine.arguments[index + 1])
+    {
+        let maxTokens = CommandLine.arguments.firstIndex(of: "--max-tokens")
+            .flatMap { Int(CommandLine.arguments[$0 + 1]) } ?? 64
+        await streamSelfTest(spec: spec, prompt: prompt, slots: slots, maxTokens: maxTokens)
+        return
+    }
     let engine = AppState.shared.engine
     let started = Date()
     guard await engine.ensureLoaded(spec) else {
