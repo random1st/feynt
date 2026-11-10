@@ -71,6 +71,8 @@ public final class ExpertSlotCache: @unchecked Sendable {
     private let files: FileTable
     private var slotExpert: [Int]
     private var slotLastUse: [Int]
+    /// Inverse of `slotExpert` for resident experts, -1 otherwise: hits in O(1).
+    private var expertSlot: [Int]
     private var clock = 0
     private let lock = NSLock()
 
@@ -132,6 +134,7 @@ public final class ExpertSlotCache: @unchecked Sendable {
         buffer = wrapped
         slotExpert = Array(repeating: -1, count: slotCount)
         slotLastUse = Array(repeating: 0, count: slotCount)
+        expertSlot = Array(repeating: -1, count: experts)
     }
 
     /// Byte offset of `slot` in `buffer`.
@@ -141,43 +144,52 @@ public final class ExpertSlotCache: @unchecked Sendable {
     /// slot; misses take the least recently used slots that are neither hit nor `avoiding`.
     /// Returns nil when there are not enough evictable slots.
     public func plan(_ experts: [Int], avoiding: Set<Int> = []) -> ExpertCachePlan? {
+        // On the decode critical path: the GPU idles from the router until this returns,
+        // so no sorting, closures or per-call collections beyond the result.
         lock.lock()
         defer { lock.unlock() }
         var slots = Array(repeating: -1, count: experts.count)
         var reserved = Array(repeating: false, count: slotCount)
         for (i, expert) in experts.enumerated() {
-            if let slot = (0 ..< slotCount).first(where: { !reserved[$0] && slotExpert[$0] == expert }) {
+            let slot = expertSlot[expert]
+            if slot >= 0 && !reserved[slot] {
                 slots[i] = slot
                 reserved[slot] = true
             }
         }
         for slot in avoiding where slot >= 0 && slot < slotCount { reserved[slot] = true }
-        let misses = experts.indices.filter { slots[$0] == -1 }
-        let evictable = (0 ..< slotCount).filter { !reserved[$0] }.sorted {
-            slotLastUse[$0] < slotLastUse[$1]
-        }
-        guard misses.count <= evictable.count else { return nil }
+        var misses: [Int] = []
+        for i in experts.indices where slots[i] == -1 { misses.append(i) }
         clock += 1
         for slot in slots where slot >= 0 { slotLastUse[slot] = clock }
-        for (n, i) in misses.enumerated() {
-            let slot = evictable[n]
-            slots[i] = slot
-            slotExpert[slot] = -1  // in flight until read
-            slotLastUse[slot] = clock
+        for i in misses {
+            var victim = -1
+            for slot in 0 ..< slotCount where !reserved[slot] {
+                if victim < 0 || slotLastUse[slot] < slotLastUse[victim] { victim = slot }
+            }
+            guard victim >= 0 else { return nil }
+            reserved[victim] = true
+            if slotExpert[victim] >= 0 { expertSlot[slotExpert[victim]] = -1 }
+            slots[i] = victim
+            slotExpert[victim] = -1  // in flight until read
+            slotLastUse[victim] = clock
         }
         totalHits += experts.count - misses.count
         totalMisses += misses.count
         return ExpertCachePlan(experts: experts, slots: slots, misses: misses)
     }
 
-    /// Reads the plan's misses into their slots, in parallel, and marks them resident.
+    /// Reads the plan's misses into their slots and marks them resident. Each of the nine
+    /// parts of each miss is its own pread, all in parallel: a layer usually misses one or
+    /// two experts, and nine reads in flight copy faster than one and keep the SSD queue deep.
     public func fill(_ plan: ExpertCachePlan) throws {
+        let parts = ExpertSlotLayout.parts.count
         let errors = NSLock()
         nonisolated(unsafe) var firstError: Error?
-        DispatchQueue.concurrentPerform(iterations: plan.misses.count) { n in
-            let i = plan.misses[n]
+        DispatchQueue.concurrentPerform(iterations: plan.misses.count * parts) { n in
+            let i = plan.misses[n / parts]
             do {
-                try self.read(expert: plan.experts[i], into: plan.slots[i])
+                try self.read(expert: plan.experts[i], part: n % parts, into: plan.slots[i])
             } catch {
                 errors.lock()
                 if firstError == nil { firstError = error }
@@ -186,7 +198,10 @@ public final class ExpertSlotCache: @unchecked Sendable {
         }
         if let firstError { throw firstError }
         lock.lock()
-        for i in plan.misses { slotExpert[plan.slots[i]] = plan.experts[i] }
+        for i in plan.misses {
+            slotExpert[plan.slots[i]] = plan.experts[i]
+            expertSlot[plan.experts[i]] = plan.slots[i]
+        }
         lock.unlock()
     }
 
@@ -199,21 +214,18 @@ public final class ExpertSlotCache: @unchecked Sendable {
         return plan
     }
 
-    private func read(expert: Int, into slot: Int) throws {
-        let slotBase = base.advanced(by: offset(ofSlot: slot))
-        for part in 0 ..< ExpertSlotLayout.parts.count {
-            let bytes = layout.partBytes[part]
-            let source = sources[part]
-            let fileOffset = source.offset + UInt64(expert * bytes)
-            let destination = slotBase.advanced(by: layout.partOffsets[part])
-            var filled = 0
-            while filled < bytes {
-                let n = pread(source.fd, destination.advanced(by: filled), bytes - filled,
-                              off_t(fileOffset) + off_t(filled))
-                if n < 0 { throw Failure.read(errno: errno, part: ExpertSlotLayout.parts[part]) }
-                if n == 0 { throw Failure.shortRead(part: ExpertSlotLayout.parts[part]) }
-                filled += n
-            }
+    private func read(expert: Int, part: Int, into slot: Int) throws {
+        let bytes = layout.partBytes[part]
+        let source = sources[part]
+        let fileOffset = source.offset + UInt64(expert * bytes)
+        let destination = base.advanced(by: offset(ofSlot: slot) + layout.partOffsets[part])
+        var filled = 0
+        while filled < bytes {
+            let n = pread(source.fd, destination.advanced(by: filled), bytes - filled,
+                          off_t(fileOffset) + off_t(filled))
+            if n < 0 { throw Failure.read(errno: errno, part: ExpertSlotLayout.parts[part]) }
+            if n == 0 { throw Failure.shortRead(part: ExpertSlotLayout.parts[part]) }
+            filled += n
         }
     }
 }

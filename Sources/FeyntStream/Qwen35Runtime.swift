@@ -488,7 +488,8 @@ public final class Qwen35Runtime: @unchecked Sendable {
         enc.setBytes(&i, length: 4, index: 6); enc.setBytes(&o, length: 4, index: 7); enc.setBytes(&bt, length: 4, index: 8)
         enc.setBytes(&xs, length: 4, index: 9); enc.setBytes(&ys, length: 4, index: 10)
         enc.setBytes(&al, length: 4 * al.count, index: 11); enc.setBytes(&ac, length: 4, index: 12)
-        enc.dispatchThreadgroups(MTLSize(width: (outDim + 31) / 32, height: count, depth: 1),
+        let rows = Qwen35Kernels.gemvRowsPerThreadgroup
+        enc.dispatchThreadgroups(MTLSize(width: (outDim + rows - 1) / rows, height: count, depth: 1),
                                  threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
     }
 

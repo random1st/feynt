@@ -6,7 +6,11 @@
 /// per-group form TurboFieldfare's `moe.metal` uses - `s * sum(q*x) + b * sum(x)` - with one
 /// simdgroup per output row.
 enum Qwen35Kernels {
-    static let source = #"""
+    /// Rows of one qgemv matrix per simdgroup; a threadgroup of 8 simdgroups covers 8x that.
+    static let gemvRowsPerSimdgroup = 4
+    static var gemvRowsPerThreadgroup: Int { 8 * gemvRowsPerSimdgroup }
+    static var source: String { body.replacingOccurrences(of: "__RPS__", with: String(gemvRowsPerSimdgroup)) }
+    private static let body = #"""
 #include <metal_stdlib>
 using namespace metal;
 
@@ -18,7 +22,7 @@ using namespace metal;
 // Each simdgroup computes RPS rows and each lane loads its slice of x into registers once,
 // reusing it for all of them: reloading the 8 KB input for every one of a million rows a
 // token was the kernel's real cost, not the weight reads.
-constant uint RPS = 4;          // rows per simdgroup
+constant uint RPS = __RPS__;          // rows per simdgroup
 constant uint ROWS = 8 * RPS;   // rows per threadgroup (8 simdgroups)
 kernel void qgemv(device const uchar*  base   [[buffer(0)]],
                   constant uint*       wOff   [[buffer(1)]],
@@ -55,7 +59,8 @@ kernel void qgemv(device const uchar*  base   [[buffer(0)]],
     device const bfloat* S = (device const bfloat*)(base + sOff[m]);
     device const bfloat* B = (device const bfloat*)(base + bOff[m]);
     device const float* xm = x + m * xStride;
-    float acc[RPS] = {0.0f, 0.0f, 0.0f, 0.0f};
+    float acc[RPS];
+    for (uint r = 0; r < RPS; ++r) acc[r] = 0.0f;
     for (uint c = lane; c < chunksPerRow; c += 32) {
         float xr[32];
         float sx = 0.0f;
