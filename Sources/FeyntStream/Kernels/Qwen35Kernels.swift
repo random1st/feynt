@@ -24,6 +24,43 @@ using namespace metal;
 // token was the kernel's real cost, not the weight reads.
 constant uint RPS = __RPS__;          // rows per simdgroup
 constant uint ROWS = 8 * RPS;   // rows per threadgroup (8 simdgroups)
+// The row loop, compiled once per bit width so the nibble/byte unpacking unrolls.
+template <uint BITS>
+inline void qgemv_rows(device const uint4* W, device const bfloat* S, device const bfloat* B,
+                       device const float* xm, uint row0, uint outDim, uint inDim, uint lane,
+                       thread float* acc) {
+    constexpr uint perWord = 32 / BITS;
+    constexpr uint perChunk = 4 * perWord;
+    constexpr uint wordsPerGroup = 64 / perWord;
+    constexpr uint mask = (1u << BITS) - 1u;
+    uint chunksPerRow = inDim * BITS / 128;
+    uint groups = inDim / 64;
+    for (uint c = lane; c < chunksPerRow; c += 32) {
+        float xr[perChunk];
+        float sx = 0.0f;
+        device const float4* xc = (device const float4*)(xm + c * perChunk);
+        for (uint i = 0; i < perChunk / 4; ++i) {
+            float4 v = xc[i];
+            xr[4 * i] = v.x; xr[4 * i + 1] = v.y; xr[4 * i + 2] = v.z; xr[4 * i + 3] = v.w;
+            sx += v.x + v.y + v.z + v.w;
+        }
+        uint gidx = (c * 4) / wordsPerGroup;
+        for (uint r = 0; r < RPS; ++r) {
+            uint row = row0 + r;
+            if (row >= outDim) break;
+            uint4 w4 = W[row * chunksPerRow + c];
+            float qx = 0.0f;
+            for (uint j = 0; j < 4; ++j) {
+                uint w = w4[j];
+                for (uint k = 0; k < perWord; ++k) {
+                    qx += float((w >> (BITS * k)) & mask) * xr[j * perWord + k];
+                }
+            }
+            acc[r] += float(S[row * groups + gidx]) * qx + float(B[row * groups + gidx]) * sx;
+        }
+    }
+}
+
 kernel void qgemv(device const uchar*  base   [[buffer(0)]],
                   constant uint*       wOff   [[buffer(1)]],
                   constant uint*       sOff   [[buffer(2)]],
@@ -48,42 +85,16 @@ kernel void qgemv(device const uchar*  base   [[buffer(0)]],
     // Hit-first split: matrices whose phase differs from `want` belong to the other pass
     // (want 2 runs every matrix).
     if (want < 2 && phase[m] != want) return;
-    uint wordsPerRow = inDim * bits / 32;
-    uint chunksPerRow = wordsPerRow / 4;
-    uint perWord = 32 / bits;
-    uint perChunk = 4 * perWord;
-    uint wordsPerGroup = 64 / perWord;
-    uint mask = (1u << bits) - 1u;
-    uint groups = inDim / 64;
     device const uint4* W = (device const uint4*)(base + wOff[m]);
     device const bfloat* S = (device const bfloat*)(base + sOff[m]);
     device const bfloat* B = (device const bfloat*)(base + bOff[m]);
     device const float* xm = x + m * xStride;
     float acc[RPS];
     for (uint r = 0; r < RPS; ++r) acc[r] = 0.0f;
-    for (uint c = lane; c < chunksPerRow; c += 32) {
-        float xr[32];
-        float sx = 0.0f;
-        device const float4* xc = (device const float4*)(xm + c * perChunk);
-        for (uint i = 0; i < perChunk / 4; ++i) {
-            float4 v = xc[i];
-            xr[4 * i] = v.x; xr[4 * i + 1] = v.y; xr[4 * i + 2] = v.z; xr[4 * i + 3] = v.w;
-            sx += v.x + v.y + v.z + v.w;
-        }
-        uint gidx = (c * 4) / wordsPerGroup;
-        for (uint r = 0; r < RPS; ++r) {
-            uint row = row0 + r;
-            if (row >= outDim) break;
-            uint4 w4 = W[row * chunksPerRow + c];
-            float qx = 0.0f;
-            for (uint j = 0; j < 4; ++j) {
-                uint w = w4[j];
-                for (uint k = 0; k < perWord; ++k) {
-                    qx += float((w >> (bits * k)) & mask) * xr[j * perWord + k];
-                }
-            }
-            acc[r] += float(S[row * groups + gidx]) * qx + float(B[row * groups + gidx]) * sx;
-        }
+    if (bits == 4) {
+        qgemv_rows<4>(W, S, B, xm, row0, outDim, inDim, lane, acc);
+    } else {
+        qgemv_rows<8>(W, S, B, xm, row0, outDim, inDim, lane, acc);
     }
     device float* ym = y + m * yStride;
     for (uint r = 0; r < RPS; ++r) {
