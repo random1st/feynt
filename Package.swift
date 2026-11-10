@@ -25,6 +25,7 @@ let package = Package(
         .executableTarget(
             name: "Feynt",
             dependencies: [
+                "FeyntStream",
                 .product(name: "DFlashKit", package: "dflash-swift"),
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
@@ -33,7 +34,10 @@ let package = Package(
                 .product(name: "HuggingFace", package: "swift-huggingface"),
                 .product(name: "Tokenizers", package: "swift-transformers"),
             ],
-            path: "Sources/Feynt")
+            path: "Sources/Feynt"),
+        // The low-memory runtime: Qwen3.5-MoE in Metal, routed experts streamed from SSD.
+        // No MLX here on purpose - see Sources/FeyntStream/README.md.
+        .target(name: "FeyntStream", path: "Sources/FeyntStream", exclude: ["Vendor/TurboFieldfare/LICENSE"]),
     ]
 )
 
@@ -48,7 +52,7 @@ let package = Package(
 if ProcessInfo.processInfo.environment["FEYNT_TESTS"] == "1" {
     package.targets.append(
         .testTarget(
-            name: "FeyntTests", dependencies: ["Feynt"], path: "Tests/FeyntTests",
+            name: "FeyntTests", dependencies: ["Feynt", "FeyntStream"], path: "Tests/FeyntTests",
             // Schema fixtures of the structured-output tests vendored from mac-mlx.
             resources: [.copy("MacMLXConstraint/Fixtures")]))
 }
