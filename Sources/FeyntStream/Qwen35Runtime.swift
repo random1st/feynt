@@ -117,7 +117,7 @@ public final class Qwen35Runtime: @unchecked Sendable {
         }
         for name in ["qgemv", "embed_q4", "rmsnorm", "add_inplace", "conv_step", "delta_gates", "delta_step",
                      "gated_norm", "split_qgate", "rope_partial", "kv_append", "attend", "route_topk",
-                     "swiglu", "gated_add", "zero", "argmax", "weighted_sum"] {
+                     "swiglu", "gated_add", "zero", "argmax", "weighted_sum", "residual_norm"] {
             guard let fn = library.makeFunction(name: name) else { throw Failure.kernel("missing \(name)") }
             pipelines[name] = try device.makeComputePipelineState(function: fn)
         }
@@ -177,16 +177,15 @@ public final class Qwen35Runtime: @unchecked Sendable {
         var enc = cb.makeComputeCommandEncoder(dispatchType: .concurrent)!
         let L = Qwen35Names.layer
         embed(enc, token: token)
+        try norm(enc, x, L(0) + "input_layernorm.weight", h, dim: hidden)
         for layer in 0 ..< layers {
             let p = L(layer)
-            try norm(enc, x, p + "input_layernorm.weight", h, dim: hidden)
             if Self.isAttention(layer) {
                 try attention(enc, layer: layer, prefix: p + "self_attn.")
             } else {
                 try deltaNet(enc, layer: layer, prefix: p + "linear_attn.")
             }
-            add(enc, x, mix, hidden)
-            try norm(enc, x, p + "post_attention_layernorm.weight", h, dim: hidden)
+            try residualNorm(enc, mix, gated: false, p + "post_attention_layernorm.weight")
             try gemv(enc, p + "mlp.gate", h, routerLogits)
             dispatch(enc, "route_topk", [routerLogits, routeIdx, routeWts], u32: [UInt32(experts), UInt32(topK)],
                      threads: experts, groups: 1, perGroup: experts)
@@ -208,11 +207,11 @@ public final class Qwen35Runtime: @unchecked Sendable {
             cb.encodeWaitForEvent(event, value: base + UInt64(3 * layer + 3))
             enc = cb.makeComputeCommandEncoder(dispatchType: .concurrent)!
             routedExperts(enc, layer: layer, phase: 1)
-            dispatch(enc, "gated_add", [moe, shared, sharedGate], u32: [UInt32(hidden)], threads: hidden)
-            add(enc, x, moe, hidden)
+            // The next layer's input norm, or the final norm after the last layer.
+            try residualNorm(enc, moe, gated: true,
+                             layer + 1 < layers ? L(layer + 1) + "input_layernorm.weight" : Qwen35Names.prefix + "norm.weight")
         }
         if wantLogits {
-            try norm(enc, x, Qwen35Names.prefix + "norm.weight", h, dim: hidden)
             try gemv(enc, "language_model.lm_head", h, logits)
             dispatch(enc, "argmax", [logits, argmaxOut], u32: [UInt32(vocab)], threads: 1024, groups: 1, perGroup: 1024)
         }
@@ -535,6 +534,18 @@ public final class Qwen35Runtime: @unchecked Sendable {
         enc.setBytes(&d, length: 4, index: 1); enc.setBytes(&r, length: 4, index: 2); enc.setBytes(&p, length: 4, index: 3)
         enc.setBytes(&base, length: 4, index: 4); enc.setBytes(&hh, length: 4, index: 5)
         threads(enc, count * rotary / 2)
+    }
+
+    /// x += delta (+ shared * sigmoid(gate) when `gated`), then h = rmsnorm(x) * weight.
+    private func residualNorm(_ enc: MTLComputeCommandEncoder, _ delta: MTLBuffer, gated: Bool, _ weight: String) throws {
+        let w = try resident.entry(weight)
+        enc.setComputePipelineState(pipelines["residual_norm"]!)
+        enc.setBuffer(x, offset: 0, index: 0); enc.setBuffer(delta, offset: 0, index: 1)
+        enc.setBuffer(shared, offset: 0, index: 2); enc.setBuffer(sharedGate, offset: 0, index: 3)
+        enc.setBuffer(resident.buffer, offset: w.offset, index: 4); enc.setBuffer(h, offset: 0, index: 5)
+        var d = UInt32(hidden), e = eps, gt = UInt32(gated ? 1 : 0)
+        enc.setBytes(&d, length: 4, index: 6); enc.setBytes(&e, length: 4, index: 7); enc.setBytes(&gt, length: 4, index: 8)
+        go(enc, MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 1024, height: 1, depth: 1))
     }
 
     private func add(_ enc: MTLComputeCommandEncoder, _ target: MTLBuffer, _ source: MTLBuffer, _ n: Int) {

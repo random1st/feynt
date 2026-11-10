@@ -157,6 +157,48 @@ kernel void rmsnorm(device const float*  x     [[buffer(0)]],
     }
 }
 
+// Residual add fused with the next RMSNorm (one threadgroup): x += a, or for the MoE
+// x += a + s * sigmoid(gate[0]); then y = rmsnorm(x) * w. Same operation order as the
+// separate gated_add / add_inplace / rmsnorm kernels, so results are bit-identical.
+kernel void residual_norm(device float*        x     [[buffer(0)]],
+                          device const float*  a     [[buffer(1)]],
+                          device const float*  s     [[buffer(2)]],
+                          device const float*  gate  [[buffer(3)]],
+                          device const bfloat* w     [[buffer(4)]],
+                          device float*        y     [[buffer(5)]],
+                          constant uint&       dim   [[buffer(6)]],
+                          constant float&      eps   [[buffer(7)]],
+                          constant uint&       gated [[buffer(8)]],
+                          uint tid  [[thread_position_in_threadgroup]],
+                          uint tcount [[threads_per_threadgroup]],
+                          uint sg   [[simdgroup_index_in_threadgroup]],
+                          uint lane [[thread_index_in_simdgroup]]) {
+    threadgroup float partial[32];
+    float ss = 0.0f;
+    for (uint i = tid; i < dim; i += tcount) {
+        float d = a[i];
+        if (gated) d += s[i] / (1.0f + exp(-gate[0]));
+        float v = x[i] + d;
+        x[i] = v;
+        ss += v * v;
+    }
+    ss = simd_sum(ss);
+    if (lane == 0) partial[sg] = ss;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (sg == 0) {
+        uint n = (tcount + 31) / 32;
+        float t = lane < n ? partial[lane] : 0.0f;
+        t = simd_sum(t);
+        if (lane == 0) partial[0] = t;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float inv = rsqrt(partial[0] / float(dim) + eps);
+    for (uint i = tid; i < dim; i += tcount) {
+        float v = x[i] * inv;
+        y[i] = v * float(w[i]);
+    }
+}
+
 kernel void add_inplace(device float* a [[buffer(0)]], device const float* b [[buffer(1)]],
                         constant uint& n [[buffer(2)]], uint i [[thread_position_in_grid]]) {
     if (i < n) a[i] += b[i];
