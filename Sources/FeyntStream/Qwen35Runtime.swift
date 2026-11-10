@@ -174,7 +174,7 @@ public final class Qwen35Runtime: @unchecked Sendable {
         }
         var buffers: [MTLCommandBuffer] = []
         var cb = queue.makeCommandBuffer()!
-        var enc = cb.makeComputeCommandEncoder()!
+        var enc = cb.makeComputeCommandEncoder(dispatchType: .concurrent)!
         let L = Qwen35Names.layer
         embed(enc, token: token)
         for layer in 0 ..< layers {
@@ -198,15 +198,15 @@ public final class Qwen35Runtime: @unchecked Sendable {
             // The shared expert needs no route: it runs while the CPU plans. Cache hits run
             // while the misses are read; the misses last.
             cb = queue.makeCommandBuffer()!
-            enc = cb.makeComputeCommandEncoder()!
+            enc = cb.makeComputeCommandEncoder(dispatchType: .concurrent)!
             try sharedExpert(enc, prefix: p + "mlp.")
             enc.endEncoding()
             cb.encodeWaitForEvent(event, value: base + UInt64(3 * layer + 2))
-            enc = cb.makeComputeCommandEncoder()!
+            enc = cb.makeComputeCommandEncoder(dispatchType: .concurrent)!
             routedExperts(enc, layer: layer, phase: 0)
             enc.endEncoding()
             cb.encodeWaitForEvent(event, value: base + UInt64(3 * layer + 3))
-            enc = cb.makeComputeCommandEncoder()!
+            enc = cb.makeComputeCommandEncoder(dispatchType: .concurrent)!
             routedExperts(enc, layer: layer, phase: 1)
             dispatch(enc, "gated_add", [moe, shared, sharedGate], u32: [UInt32(hidden)], threads: hidden)
             add(enc, x, moe, hidden)
@@ -288,7 +288,7 @@ public final class Qwen35Runtime: @unchecked Sendable {
         for k in 0 ..< topK { weights[k] = 1 / Float(topK) }
         func time(_ body: (MTLComputeCommandEncoder) throws -> Void) throws -> Double {
             let cb = queue.makeCommandBuffer()!
-            let enc = cb.makeComputeCommandEncoder()!
+            let enc = cb.makeComputeCommandEncoder(dispatchType: .concurrent)!
             for _ in 0 ..< repeats { try body(enc) }
             enc.endEncoding(); cb.commit(); cb.waitUntilCompleted()
             return (cb.gpuEndTime - cb.gpuStartTime) / Double(repeats) * 1000
@@ -312,14 +312,20 @@ public final class Qwen35Runtime: @unchecked Sendable {
     // MARK: - Blocks
 
     private func attention(_ enc: MTLComputeCommandEncoder, layer: Int, prefix: String) throws {
-        try gemv(enc, prefix + "q_proj", h, qg)
-        dispatch(enc, "split_qgate", [qg, q, gate], u32: [UInt32(headDim), UInt32(heads)], threads: heads * headDim)
-        try gemv(enc, prefix + "k_proj", h, kBuf)
-        try gemv(enc, prefix + "v_proj", h, vBuf)
-        try norm(enc, q, prefix + "q_norm.weight", q, dim: headDim, heads: heads)
-        try norm(enc, kBuf, prefix + "k_norm.weight", kBuf, dim: headDim, heads: kvHeads)
+        try together(enc) {
+            try gemv(enc, prefix + "q_proj", h, qg)
+            try gemv(enc, prefix + "k_proj", h, kBuf)
+            try gemv(enc, prefix + "v_proj", h, vBuf)
+        }
+        try together(enc) {
+            dispatch(enc, "split_qgate", [qg, q, gate], u32: [UInt32(headDim), UInt32(heads)], threads: heads * headDim)
+            try norm(enc, kBuf, prefix + "k_norm.weight", kBuf, dim: headDim, heads: kvHeads)
+        }
+        try together(enc) {
+            try norm(enc, q, prefix + "q_norm.weight", q, dim: headDim, heads: heads)
+            rope(enc, kBuf, heads: kvHeads)
+        }
         rope(enc, q, heads: heads)
-        rope(enc, kBuf, heads: kvHeads)
         dispatch(enc, "kv_append", [kBuf, vBuf, keyCache[layer]!, valueCache[layer]!],
                  u32: [UInt32(headDim), UInt32(config.maxContext), UInt32(position), UInt32(kvHeads)],
                  threads: kvHeads * headDim)
@@ -333,16 +339,19 @@ public final class Qwen35Runtime: @unchecked Sendable {
         enc.setBytes(&d, length: 4, index: 5); enc.setBytes(&cap, length: 4, index: 6)
         enc.setBytes(&t, length: 4, index: 7); enc.setBytes(&group, length: 4, index: 8)
         enc.setBytes(&scale, length: 4, index: 9)
-        enc.dispatchThreadgroups(MTLSize(width: heads, height: 1, depth: 1),
+        go(enc, MTLSize(width: heads, height: 1, depth: 1),
                                  threadsPerThreadgroup: MTLSize(width: headDim, height: 1, depth: 1))
         try gemv(enc, prefix + "o_proj", attn, mix)
     }
 
     private func deltaNet(_ enc: MTLComputeCommandEncoder, layer: Int, prefix: String) throws {
-        try gemv(enc, prefix + "in_proj_qkv", h, qkv)
-        try gemv(enc, prefix + "in_proj_z", h, z)
-        try gemv(enc, prefix + "in_proj_b", h, b)
-        try gemv(enc, prefix + "in_proj_a", h, a)
+        try together(enc) {
+            try gemv(enc, prefix + "in_proj_qkv", h, qkv)
+            try gemv(enc, prefix + "in_proj_z", h, z)
+            try gemv(enc, prefix + "in_proj_b", h, b)
+            try gemv(enc, prefix + "in_proj_a", h, a)
+        }
+        grouping = true  // conv step and gates are independent
         let convW = try resident.entry(prefix + "conv1d.weight")
         enc.setComputePipelineState(pipelines["conv_step"]!)
         enc.setBuffer(qkv, offset: 0, index: 0)
@@ -352,9 +361,6 @@ public final class Qwen35Runtime: @unchecked Sendable {
         var c = UInt32(convDim)
         enc.setBytes(&c, length: 4, index: 4)
         threads(enc, convDim)
-        // q and k, per head, weightless rmsnorm with the reference's scales.
-        try normRaw(enc, u, 0, qn, dim: dk, heads: hk, weight: nil, scale: 1 / Float(dk))
-        try normRaw(enc, u, hk * dk * 4, kn, dim: dk, heads: hk, weight: nil, scale: 1 / Float(dk).squareRoot())
         let aLog = try resident.entry(prefix + "A_log"), dt = try resident.entry(prefix + "dt_bias")
         enc.setComputePipelineState(pipelines["delta_gates"]!)
         enc.setBuffer(a, offset: 0, index: 0); enc.setBuffer(b, offset: 0, index: 1)
@@ -364,6 +370,13 @@ public final class Qwen35Runtime: @unchecked Sendable {
         var hvv = UInt32(hv)
         enc.setBytes(&hvv, length: 4, index: 6)
         threads(enc, hv)
+        grouping = false
+        enc.memoryBarrier(scope: .buffers)
+        // q and k, per head, weightless rmsnorm with the reference's scales.
+        try together(enc) {
+            try normRaw(enc, u, 0, qn, dim: dk, heads: hk, weight: nil, scale: 1 / Float(dk))
+            try normRaw(enc, u, hk * dk * 4, kn, dim: dk, heads: hk, weight: nil, scale: 1 / Float(dk).squareRoot())
+        }
         enc.setComputePipelineState(pipelines["delta_step"]!)
         enc.setBuffer(qn, offset: 0, index: 0); enc.setBuffer(kn, offset: 0, index: 1)
         enc.setBuffer(u, offset: 2 * hk * dk * 4, index: 2)
@@ -371,7 +384,7 @@ public final class Qwen35Runtime: @unchecked Sendable {
         enc.setBuffer(recState[layer]!, offset: 0, index: 5); enc.setBuffer(y, offset: 0, index: 6)
         var dkk = UInt32(dk), dvv = UInt32(dv), ratio = UInt32(hv / hk)
         enc.setBytes(&dkk, length: 4, index: 7); enc.setBytes(&dvv, length: 4, index: 8); enc.setBytes(&ratio, length: 4, index: 9)
-        enc.dispatchThreadgroups(MTLSize(width: dv / 4, height: hv, depth: 1),
+        go(enc, MTLSize(width: dv / 4, height: hv, depth: 1),
                                  threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
         let nw = try resident.entry(prefix + "norm.weight")
         enc.setComputePipelineState(pipelines["gated_norm"]!)
@@ -379,17 +392,19 @@ public final class Qwen35Runtime: @unchecked Sendable {
         enc.setBuffer(resident.buffer, offset: nw.offset, index: 2); enc.setBuffer(o, offset: 0, index: 3)
         var dvd = UInt32(dv), e = eps
         enc.setBytes(&dvd, length: 4, index: 4); enc.setBytes(&e, length: 4, index: 5)
-        enc.dispatchThreadgroups(MTLSize(width: hv, height: 1, depth: 1),
+        go(enc, MTLSize(width: hv, height: 1, depth: 1),
                                  threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
         try gemv(enc, prefix + "out_proj", o, mix)
     }
 
     private func sharedExpert(_ enc: MTLComputeCommandEncoder, prefix: String) throws {
-        try gemv(enc, prefix + "shared_expert.gate_proj", h, sg)
-        try gemv(enc, prefix + "shared_expert.up_proj", h, su)
+        try together(enc) {
+            try gemv(enc, prefix + "shared_expert.gate_proj", h, sg)
+            try gemv(enc, prefix + "shared_expert.up_proj", h, su)
+            try gemv(enc, prefix + "shared_expert_gate", h, sharedGate)
+        }
         dispatch(enc, "swiglu", [sg, su, sh], u32: [UInt32(moeInter)], threads: moeInter)
         try gemv(enc, prefix + "shared_expert.down_proj", sh, shared)
-        try gemv(enc, prefix + "shared_expert_gate", h, sharedGate)
     }
 
     /// The routed experts of one phase (0 = hits, 1 = misses, 2 = all) in three batched
@@ -402,12 +417,14 @@ public final class Qwen35Runtime: @unchecked Sendable {
         let ones = [Float](repeating: 1, count: topK)
         let base = caches[layer].buffer
         let select = (routeTable, row + Self.phaseAt, phase)
-        batchedGemv(enc, base: base, w: part(0), s: part(1), b: part(2), x: h, xStride: 0,
-                    y: eg, yStride: moeInter, inDim: hidden, outDim: moeInter, bits: 4, count: topK, alpha: ones,
-                    select: select)
-        batchedGemv(enc, base: base, w: part(3), s: part(4), b: part(5), x: h, xStride: 0,
-                    y: eu, yStride: moeInter, inDim: hidden, outDim: moeInter, bits: 4, count: topK, alpha: ones,
-                    select: select)
+        together(enc) {
+            batchedGemv(enc, base: base, w: part(0), s: part(1), b: part(2), x: h, xStride: 0,
+                        y: eg, yStride: moeInter, inDim: hidden, outDim: moeInter, bits: 4, count: topK, alpha: ones,
+                        select: select)
+            batchedGemv(enc, base: base, w: part(3), s: part(4), b: part(5), x: h, xStride: 0,
+                        y: eu, yStride: moeInter, inDim: hidden, outDim: moeInter, bits: 4, count: topK, alpha: ones,
+                        select: select)
+        }
         dispatch(enc, "swiglu", [eg, eu, eh], u32: [UInt32(topK * moeInter)], threads: topK * moeInter)
         batchedGemv(enc, base: base, w: part(6), s: part(7), b: part(8), x: eh, xStride: moeInter,
                     y: ey, yStride: hidden, inDim: moeInter, outDim: hidden, bits: 4, count: topK, alpha: ones,
@@ -489,7 +506,7 @@ public final class Qwen35Runtime: @unchecked Sendable {
         enc.setBytes(&xs, length: 4, index: 9); enc.setBytes(&ys, length: 4, index: 10)
         enc.setBytes(&al, length: 4 * al.count, index: 11); enc.setBytes(&ac, length: 4, index: 12)
         let rows = Qwen35Kernels.gemvRowsPerThreadgroup
-        enc.dispatchThreadgroups(MTLSize(width: (outDim + rows - 1) / rows, height: count, depth: 1),
+        go(enc, MTLSize(width: (outDim + rows - 1) / rows, height: count, depth: 1),
                                  threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
     }
 
@@ -507,7 +524,7 @@ public final class Qwen35Runtime: @unchecked Sendable {
         var d = UInt32(dim), e = eps, sc = scale, hw = UInt32(weight == nil ? 0 : 1)
         enc.setBytes(&d, length: 4, index: 3); enc.setBytes(&e, length: 4, index: 4)
         enc.setBytes(&sc, length: 4, index: 5); enc.setBytes(&hw, length: 4, index: 6)
-        enc.dispatchThreadgroups(MTLSize(width: heads, height: 1, depth: 1),
+        go(enc, MTLSize(width: heads, height: 1, depth: 1),
                                  threadsPerThreadgroup: MTLSize(width: min(256, max(32, dim)), height: 1, depth: 1))
     }
 
@@ -533,16 +550,33 @@ public final class Qwen35Runtime: @unchecked Sendable {
             enc.setBytes(&v, length: 4, index: buffers.count + j)
         }
         if let groups, let perGroup {
-            enc.dispatchThreadgroups(MTLSize(width: groups, height: 1, depth: 1),
+            go(enc, MTLSize(width: groups, height: 1, depth: 1),
                                      threadsPerThreadgroup: MTLSize(width: perGroup, height: 1, depth: 1))
         } else {
             threads(enc, n)
         }
     }
 
+    /// Encoders are concurrent: every dispatch is followed by a barrier unless it is inside
+    /// `together`, whose dispatches do not depend on each other and may overlap. Small
+    /// kernels (32-row projections, per-head norms) then share the GPU instead of each
+    /// paying a full drain.
+    private var grouping = false
+
+    private func go(_ enc: MTLComputeCommandEncoder, _ groups: MTLSize, threadsPerThreadgroup perGroup: MTLSize) {
+        enc.dispatchThreadgroups(groups, threadsPerThreadgroup: perGroup)
+        if !grouping { enc.memoryBarrier(scope: .buffers) }
+    }
+
+    private func together(_ enc: MTLComputeCommandEncoder, _ body: () throws -> Void) rethrows {
+        grouping = true
+        defer { grouping = false; enc.memoryBarrier(scope: .buffers) }
+        try body()
+    }
+
     private func threads(_ enc: MTLComputeCommandEncoder, _ n: Int) {
         let width = 256
-        enc.dispatchThreadgroups(MTLSize(width: (n + width - 1) / width, height: 1, depth: 1),
+        go(enc, MTLSize(width: (n + width - 1) / width, height: 1, depth: 1),
                                  threadsPerThreadgroup: MTLSize(width: width, height: 1, depth: 1))
     }
 }
