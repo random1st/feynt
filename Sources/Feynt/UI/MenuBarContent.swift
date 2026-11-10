@@ -116,8 +116,9 @@ struct MenuBarContent: View {
         }
 
         Button("Open chat") {
-            NSApp.activate(ignoringOtherApps: true)
             openWindow(id: MainWindowID.value)
+            // Already open: onAppear will not fire again, so bring it forward here.
+            WindowActivation.opened()
         }
 
         Button("Open log") {

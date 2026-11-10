@@ -50,6 +50,12 @@ struct FeyntApp: App {
         Window("Feynt", id: MainWindowID.value) {
             RootView(settings: state.settings)
                 .environmentObject(state)
+                // An accessory (menu-bar) app may show a window without getting the
+                // keyboard: macOS treats `activate` as a request it can refuse, and typing
+                // in the chat went to whatever app was in front. While the window is open
+                // Feynt is a regular app, so it can take focus like any other.
+                .onAppear { WindowActivation.opened() }
+                .onDisappear { WindowActivation.closed() }
         }
         .defaultSize(width: 780, height: 560)
 
@@ -177,5 +183,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             exit(2)
         }
         Task { @MainActor in await generateOnce(spec: spec, prompt: prompt) }
+    }
+}
+
+/// Switches between menu-bar-only and regular app as the main window opens and closes.
+@MainActor
+enum WindowActivation {
+    private(set) static var isWindowOpen = false
+
+    static func opened() {
+        isWindowOpen = true
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate()
+    }
+
+    static func closed() {
+        isWindowOpen = false
+        NSApp.setActivationPolicy(.accessory)
     }
 }

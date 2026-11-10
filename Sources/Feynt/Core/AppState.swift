@@ -118,6 +118,6 @@ final class AppState: ObservableObject {
         settings.wizardCompleted = true
         // Launch raised the app to a regular one so the wizard could take focus; drop back
         // so the Dock icon does not outlive the setup it existed for.
-        NSApp.setActivationPolicy(.accessory)
+        if !WindowActivation.isWindowOpen { NSApp.setActivationPolicy(.accessory) }
     }
 }
