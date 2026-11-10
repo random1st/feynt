@@ -19,6 +19,10 @@ import Tokenizers
         let runtime = try Qwen35Runtime(directory: directory, config: .init(slotsPerLayer: slots))
         print(String(format: "loaded in %.1fs, %.2f GB weights + slots, footprint %.2f GB",
                      Date().timeIntervalSince(started), Double(runtime.weightBytes) / 1e9, footprintGB()))
+        if CommandLine.arguments.contains("--bench") {
+            for (name, ms) in try runtime.benchmark() { print(String(format: "%-22@ %7.3f ms", name as NSString, ms)) }
+            exit(0)
+        }
         let promptTokens = try tokenizer.applyChatTemplate(
             messages: [["role": "user", "content": prompt]], tools: nil,
             additionalContext: ["enable_thinking": false])
@@ -28,6 +32,7 @@ import Tokenizers
             next = try runtime.step(token: token, wantLogits: i == promptTokens.count - 1) ?? next
         }
         let prefill = Date().timeIntervalSince(t0)
+        runtime.resetProfile()
         var generated: [Int] = []
         let eos = Set([tokenizer.eosTokenId].compactMap { $0 } + [248046, 248044])
         let t1 = Date()
@@ -41,6 +46,9 @@ import Tokenizers
         print(String(format: "--- %d tokens · %.1f tok/s · prompt %d at %.1f tok/s · hit rate %.0f%% · footprint %.2f GB ---",
                      generated.count, Double(generated.count) / max(decode, 0.001), promptTokens.count,
                      Double(promptTokens.count) / max(prefill, 0.001), runtime.hitRate * 100, footprintGB()))
+        let pr = runtime.profile, n = Double(max(pr.steps, 1))
+        print(String(format: "--- per token: total %.1f ms · gpu %.1f · waiting %.1f · expert reads %.1f ms ---",
+                     pr.total / n * 1000, pr.gpu / n * 1000, pr.wait / n * 1000, pr.load / n * 1000))
         print("TOKENS " + generated.map(String.init).joined(separator: ","))
         exit(0)
     } catch {

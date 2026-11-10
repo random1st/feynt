@@ -10,51 +10,90 @@ enum Qwen35Kernels {
 #include <metal_stdlib>
 using namespace metal;
 
-// y[row] = alpha * dot(dequant(W[row]), x)  (+ y[row] when accumulate)
-// One simdgroup per row, ROWS rows per threadgroup.
-constant uint ROWS = 8;
-kernel void qgemv(device const uint*   W     [[buffer(0)]],
-                  device const bfloat* S     [[buffer(1)]],
-                  device const bfloat* B     [[buffer(2)]],
-                  device const float*  x     [[buffer(3)]],
-                  device float*        y     [[buffer(4)]],
-                  constant uint&       inDim [[buffer(5)]],
-                  constant uint&       outDim[[buffer(6)]],
-                  constant uint&       bits  [[buffer(7)]],
-                  constant float&      alpha [[buffer(8)]],
-                  constant uint&       accumulate [[buffer(9)]],
-                  uint tg   [[threadgroup_position_in_grid]],
-                  uint sg   [[simdgroup_index_in_threadgroup]],
-                  uint lane [[thread_index_in_simdgroup]]) {
-    uint row = tg * ROWS + sg;
-    if (row >= outDim) return;
-    uint groups = inDim / 64;
-    uint wordsPerGroup = 64 * bits / 32;
+// Batched quantized GEMV: grid.y picks one of `count` matrices that share a shape, each at
+// its own byte offsets in `base` (the routed experts of a layer, or a single resident
+// matrix). y[m][row] = alpha[m] * dot(dequant(W_m[row]), x_m), x_m = x + m * xStride.
+// One simdgroup per row; lanes stride over 4-word chunks of the row, so every lane works
+// whatever the input width (512-wide down projections used to leave 24 of 32 idle).
+// Each simdgroup computes RPS rows and each lane loads its slice of x into registers once,
+// reusing it for all of them: reloading the 8 KB input for every one of a million rows a
+// token was the kernel's real cost, not the weight reads.
+constant uint RPS = 4;          // rows per simdgroup
+constant uint ROWS = 8 * RPS;   // rows per threadgroup (8 simdgroups)
+kernel void qgemv(device const uchar*  base   [[buffer(0)]],
+                  constant uint*       wOff   [[buffer(1)]],
+                  constant uint*       sOff   [[buffer(2)]],
+                  constant uint*       bOff   [[buffer(3)]],
+                  device const float*  x      [[buffer(4)]],
+                  device float*        y      [[buffer(5)]],
+                  constant uint&       inDim  [[buffer(6)]],
+                  constant uint&       outDim [[buffer(7)]],
+                  constant uint&       bits   [[buffer(8)]],
+                  constant uint&       xStride[[buffer(9)]],
+                  constant uint&       yStride[[buffer(10)]],
+                  constant float*      alpha  [[buffer(11)]],
+                  constant uint&       accumulate [[buffer(12)]],
+                  uint2 tg  [[threadgroup_position_in_grid]],
+                  uint  sg  [[simdgroup_index_in_threadgroup]],
+                  uint  lane[[thread_index_in_simdgroup]]) {
+    uint row0 = tg.x * ROWS + sg * RPS;
+    uint m = tg.y;
+    if (row0 >= outDim) return;
+    uint wordsPerRow = inDim * bits / 32;
+    uint chunksPerRow = wordsPerRow / 4;
     uint perWord = 32 / bits;
+    uint perChunk = 4 * perWord;
+    uint wordsPerGroup = 64 / perWord;
     uint mask = (1u << bits) - 1u;
-    device const uint* wrow = W + row * (inDim * bits / 32);
-    device const bfloat* srow = S + row * groups;
-    device const bfloat* brow = B + row * groups;
-    float acc = 0.0f;
-    for (uint g = lane; g < groups; g += 32) {
-        float qx = 0.0f, sx = 0.0f;
-        device const uint* wg = wrow + g * wordsPerGroup;
-        device const float* xg = x + g * 64;
-        for (uint j = 0; j < wordsPerGroup; ++j) {
-            uint w = wg[j];
-            for (uint k = 0; k < perWord; ++k) {
-                float xv = xg[j * perWord + k];
-                qx += float((w >> (bits * k)) & mask) * xv;
-                sx += xv;
-            }
+    uint groups = inDim / 64;
+    device const uint4* W = (device const uint4*)(base + wOff[m]);
+    device const bfloat* S = (device const bfloat*)(base + sOff[m]);
+    device const bfloat* B = (device const bfloat*)(base + bOff[m]);
+    device const float* xm = x + m * xStride;
+    float acc[RPS] = {0.0f, 0.0f, 0.0f, 0.0f};
+    for (uint c = lane; c < chunksPerRow; c += 32) {
+        float xr[32];
+        float sx = 0.0f;
+        device const float4* xc = (device const float4*)(xm + c * perChunk);
+        for (uint i = 0; i < perChunk / 4; ++i) {
+            float4 v = xc[i];
+            xr[4 * i] = v.x; xr[4 * i + 1] = v.y; xr[4 * i + 2] = v.z; xr[4 * i + 3] = v.w;
+            sx += v.x + v.y + v.z + v.w;
         }
-        acc += float(srow[g]) * qx + float(brow[g]) * sx;
+        uint gidx = (c * 4) / wordsPerGroup;
+        for (uint r = 0; r < RPS; ++r) {
+            uint row = row0 + r;
+            if (row >= outDim) break;
+            uint4 w4 = W[row * chunksPerRow + c];
+            float qx = 0.0f;
+            for (uint j = 0; j < 4; ++j) {
+                uint w = w4[j];
+                for (uint k = 0; k < perWord; ++k) {
+                    qx += float((w >> (bits * k)) & mask) * xr[j * perWord + k];
+                }
+            }
+            acc[r] += float(S[row * groups + gidx]) * qx + float(B[row * groups + gidx]) * sx;
+        }
     }
-    acc = simd_sum(acc);
-    if (lane == 0) {
-        float v = alpha * acc;
-        y[row] = accumulate ? y[row] + v : v;
+    device float* ym = y + m * yStride;
+    for (uint r = 0; r < RPS; ++r) {
+        float v = simd_sum(acc[r]);
+        uint row = row0 + r;
+        if (lane == 0 && row < outDim) {
+            v *= alpha[m];
+            ym[row] = accumulate ? ym[row] + v : v;
+        }
     }
+}
+
+// out[i] = sum_m w[m] * ys[m][i]
+kernel void weighted_sum(device const float* ys [[buffer(0)]], constant float* w [[buffer(1)]],
+                         device float* out [[buffer(2)]], constant uint& n [[buffer(3)]],
+                         constant uint& count [[buffer(4)]], uint i [[thread_position_in_grid]]) {
+    if (i >= n) return;
+    float acc = 0.0f;
+    for (uint m = 0; m < count; ++m) acc += w[m] * ys[m * n + i];
+    out[i] = acc;
 }
 
 // One row of a 4-bit embedding table, dequantized.
@@ -299,36 +338,61 @@ kernel void attend(device const float* q    [[buffer(0)]],
     out[h * D + tid] = o / (1.0f + exp(-gg));
 }
 
-// Router: softmax over E logits, top-K, renormalized weights. One threadgroup of E threads.
+// Router: softmax over E logits, top-K, renormalized weights. One threadgroup of E threads,
+// all parallel: each thread ranks its own expert by counting the ones ahead of it (higher
+// probability, or equal with a lower index), so the top K are those ranked below K, and
+// they are written in ascending index order as the reference lists them. A single thread
+// doing the selection cost 0.3 ms a layer, 12 ms a token.
 kernel void route_topk(device const float* logits [[buffer(0)]],
                        device int*         idx    [[buffer(1)]],
                        device float*       wts    [[buffer(2)]],
                        constant uint&      E      [[buffer(3)]],
                        constant uint&      K      [[buffer(4)]],
-                       uint e [[thread_position_in_threadgroup]]) {
+                       uint e    [[thread_position_in_threadgroup]],
+                       uint sg   [[simdgroup_index_in_threadgroup]],
+                       uint lane [[thread_index_in_simdgroup]]) {
     threadgroup float p[256];
-    float x = e < E ? logits[e] : -INFINITY;
-    p[e] = x;
+    threadgroup float red[8];
+    threadgroup uint selected[256];
+    threadgroup float selSum;
+    float x = logits[e];
+    float m = simd_max(x);
+    if (lane == 0) red[sg] = m;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float mx = red[0];
+    for (uint i = 1; i < E / 32; ++i) mx = max(mx, red[i]);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float ex = exp(x - mx);
+    float s = simd_sum(ex);
+    if (lane == 0) red[sg] = s;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float total = 0.0f;
+    for (uint i = 0; i < E / 32; ++i) total += red[i];
+    float pe = ex / total;
+    p[e] = pe;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint rank = 0;
+    for (uint i = 0; i < E; ++i) {
+        float pi = p[i];
+        rank += (pi > pe || (pi == pe && i < e)) ? 1u : 0u;
+    }
+    bool chosen = rank < K;
+    selected[e] = chosen ? 1u : 0u;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float cs = simd_sum(chosen ? pe : 0.0f);
+    if (lane == 0) red[sg] = cs;
     threadgroup_barrier(mem_flags::mem_threadgroup);
     if (e == 0) {
-        float mx = -INFINITY;
-        for (uint i = 0; i < E; ++i) mx = max(mx, p[i]);
-        float sum = 0.0f;
-        for (uint i = 0; i < E; ++i) { p[i] = exp(p[i] - mx); sum += p[i]; }
-        for (uint i = 0; i < E; ++i) p[i] /= sum;
-        // Top-K by value; ties go to the lower index. Selected experts are then listed in
-        // ascending index order, as the reference does.
-        bool taken[256];
-        for (uint i = 0; i < E; ++i) taken[i] = false;
-        float total = 0.0f;
-        for (uint k = 0; k < K; ++k) {
-            int best = -1; float bv = -1.0f;
-            for (uint i = 0; i < E; ++i) if (!taken[i] && p[i] > bv) { bv = p[i]; best = int(i); }
-            taken[best] = true;
-            total += bv;
-        }
-        uint n = 0;
-        for (uint i = 0; i < E && n < K; ++i) if (taken[i]) { idx[n] = int(i); wts[n] = p[i] / total; ++n; }
+        float t = 0.0f;
+        for (uint i = 0; i < E / 32; ++i) t += red[i];
+        selSum = t;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (chosen) {
+        uint pos = 0;
+        for (uint i = 0; i < e; ++i) pos += selected[i];
+        idx[pos] = int(e);
+        wts[pos] = pe / selSum;
     }
 }
 
